@@ -1,0 +1,43 @@
+# requirements.txt
+# Core dependencies for Camera + Stage Control Project
+
+# ===================================
+# Camera Control (Andor Zyla SDK3)
+# ===================================
+# PyLabLib - for Andor SDK3 camera interface
+pylablib>=1.4.1
+
+# OpenCV - for image display, saving, and processing
+opencv-python>=4.8.0
+
+# NumPy - for array operations
+numpy>=1.24.0
+
+# ===================================
+# Stage Control (SmarAct MCS)
+# ===================================
+# Note: SmarAct MCS Python wrapper must be installed separately
+# from SmarAct SDK (MCSControl_PythonWrapper)
+# This is typically provided by SmarAct with their hardware SDK
+
+# ===================================
+# Agent Framework (Optional - for multi_agent scripts)
+# ===================================
+agent-framework --pre
+litellm
+python-dotenv
+
+# ===================================
+# Standard Library (included with Python, listed for reference)
+# ===================================
+# argparse - command line argument parsing
+# threading - multi-threading support
+# time - timing operations
+# pathlib - file path operations
+# typing - type hints
+# abc - abstract base classes
+# ctypes - C library interfacing (for SmarAct SDK)
+# asyncio - async operations (for agent framework)
+# os - operating system interface
+# sys - system-specific parameters
+# random - random number generation

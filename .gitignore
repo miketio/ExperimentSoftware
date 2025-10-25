@@ -1,0 +1,40 @@
+# --- Python cache & build files ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Virtual environments ---
+venv/
+.env/
+.env*/
+.venv/
+.venv*/
+
+# --- IDE / Editor settings ---
+.vscode/
+.idea/
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+
+# --- Logs / temp files ---
+*.log
+*.tmp
+
+# --- Images or large data (optional) ---
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+
+# --- Keep subproject's .git folder (gemini-agent-code-assist) ---
+!gemini-agent-code-assist/.git/
