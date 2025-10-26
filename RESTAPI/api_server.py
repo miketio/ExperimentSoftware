@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Optional
 
-from api_models import (
+from RESTAPI.api_models import (
     CommandRequest,
     MoveAbsoluteRequest,
     MoveRelativeRequest,

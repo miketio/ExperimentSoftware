@@ -1,7 +1,7 @@
 # ZylaCamera.py
 import numpy as np
 from typing import Optional, Tuple
-from andorCameraBase import AndorCameraBase
+from BaseClasses.andorCameraBase import AndorCameraBase
 import pylablib.devices.Andor as Andor
 import time
 from typing import Optional

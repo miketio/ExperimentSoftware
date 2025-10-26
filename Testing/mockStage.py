@@ -1,5 +1,5 @@
 # mock_stage.py
-from xyzStageBase import XYZStageBase
+from BaseClasses.xyzStageBase import XYZStageBase
 import time
 
 class MockXYZStage(XYZStageBase):

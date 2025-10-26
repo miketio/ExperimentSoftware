@@ -1,5 +1,5 @@
 # xyzstage_app.py
-from xyzStageBase import XYZStageBase
+from BaseClasses.xyzStageBase import XYZStageBase
 from typing import Iterable, Tuple
 
 class XYZStageApp:

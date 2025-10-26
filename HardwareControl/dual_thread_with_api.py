@@ -1,9 +1,12 @@
-# dual_thread_camera_stage_autofocus.py
+# dual_thread_with_api.py
 """
-Dual-threaded application that runs:
+Multi-threaded application with REST API integration.
+
+Threads:
 - Thread 1: Camera live stream (GUI)
 - Thread 2: Stage control via CLI commands (including autofocus)
 - Thread 3: CLI input handler
+- Thread 4: REST API server (NEW)
 
 All threads run simultaneously without blocking each other.
 """
@@ -16,12 +19,14 @@ import sys
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from CameraControl.zylaCamera import ZylaCamera
-from CameraControl.andorCameraApp import AndorCameraApp
-from SetupMotor.smartactStage import SmarActXYZStage
-from SetupMotor.xyzStageApp import XYZStageApp
-from stage_commands import StageCommandProcessor
+import uvicorn
+from HardwareControl.CameraControl.zylaCamera import ZylaCamera
+from HardwareControl.andorCameraApp import AndorCameraApp
+from HardwareControl.SetupMotor.smartactStage import SmarActXYZStage
+from HardwareControl.xyzStageApp import XYZStageApp
+from HardwareControl.stage_commands import StageCommandProcessor
+from RESTAPI.api_server import ExperimentAPI
+
 
 class AutofocusController:
     """Handles autofocus operations with live plotting."""
@@ -50,28 +55,18 @@ class AutofocusController:
     
     def calculate_focus_metric(self, image):
         """Calculate Variance of Laplacian (sharpness metric)."""
-        # Convert to grayscale if needed
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
             gray = image
             
-        # Calculate Laplacian
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         variance = laplacian.var()
         
         return variance
             
-    def run_autofocus(self, axis='x', scan_range=None, step_size=None, enable_plot=False):
-        """
-        Run autofocus scan on specified axis.
-        
-        Args:
-            axis: 'x', 'y', or 'z'
-            scan_range: total range to scan in nm (default: self.default_range)
-            step_size: step size in nm (default: self.default_step)
-            enable_plot: whether to show live plot
-        """
+    def run_autofocus(self, axis='x', scan_range=None, step_size=None, enable_plot=True):
+        """Run autofocus scan on specified axis."""
         self.axis = axis.lower()
         if self.axis not in ['x', 'y', 'z']:
             print(f"[AUTOFOCUS] Error: Invalid axis '{axis}'")
@@ -88,7 +83,6 @@ class AutofocusController:
         self.best_metric = None
         
         try:
-            # Get current position
             current_pos = self.stage_app.get_pos(self.axis)
             start_pos = current_pos - scan_range // 2
             end_pos = current_pos + scan_range // 2
@@ -100,33 +94,24 @@ class AutofocusController:
             print(f"[AUTOFOCUS] Current position: {current_pos}nm")
             print(f"[AUTOFOCUS] ========================================\n")
             
-            # # Setup live plot
-            # if self.plot_enabled:
-            #     self.setup_live_plot()
-
             print("[AUTOFOCUS] Stopping camera stream...")
             self.camera_app.camera.stop_streaming()
-            time.sleep(0.1)  # Allow SDK to settle
+            time.sleep(0.1)
 
             # Scan loop
             num_steps = int((end_pos - start_pos) / step_size) + 1
             for i, pos in enumerate(range(start_pos, end_pos + 1, step_size)):
-                # Move to position
                 self.stage_app.move_abs(self.axis, pos)
-                time.sleep(0.1)  # Wait for stage to settle
+                time.sleep(0.1)
                 
-                # Acquire image
                 self.camera_app.set_roi(400, 1200, 1300, 1000)
                 image = self.camera_app.acquire_image()
                 
-                # Calculate focus metric
                 metric = self.calculate_focus_metric(image)
                 
-                # Store results
                 self.positions.append(pos)
                 self.metrics.append(metric)
                 
-                # Print progress
                 progress = (i + 1) / num_steps * 100
                 print(f"[AUTOFOCUS] [{progress:5.1f}%] {self.axis.upper()}={pos:6d}nm -> focus={metric:8.2f}")
                     
@@ -141,7 +126,6 @@ class AutofocusController:
             print(f"[AUTOFOCUS] Focus metric: {self.best_metric:.2f}")
             print(f"[AUTOFOCUS] ========================================")
             
-            # Move to best position
             print(f"[AUTOFOCUS] Moving to optimal position...")
             self.stage_app.move_abs(self.axis, self.best_position)
             
@@ -183,9 +167,9 @@ class AutofocusController:
 
 
 class DualThreadApp:
-    """Manages camera stream and stage control in separate threads."""
+    """Manages camera stream, stage control, and REST API in separate threads."""
     
-    def __init__(self):
+    def __init__(self, enable_api=True, api_port=5000):
         self.camera = None
         self.camera_app = None
         self.stage = None
@@ -195,10 +179,16 @@ class DualThreadApp:
         self.camera_thread = None
         self.stage_thread = None
         self.input_thread = None
+        self.api_thread = None
         
         self.stop_event = threading.Event()
         self.command_queue = []
-        self.queue_lock = threading.Lock()     
+        self.queue_lock = threading.Lock()
+        
+        # API settings
+        self.enable_api = enable_api
+        self.api_port = api_port
+        self.api_server = None
         
     def initialize_camera(self):
         """Initialize camera and app in the main thread."""
@@ -206,9 +196,7 @@ class DualThreadApp:
         self.camera = ZylaCamera()
         self.camera.connect()
         self.camera_app = AndorCameraApp(self.camera)
-
         
-        # Configure camera settings
         self.camera_app.set_gain_mode("16-bit (low noise & high well capacity)")
         self.camera_app.set_exposure(0.02)
         print("[INIT] Camera initialized successfully")
@@ -219,15 +207,24 @@ class DualThreadApp:
         self.stage = SmarActXYZStage()
         self.stage_app = XYZStageApp(self.stage)
         
-        # Initialize autofocus controller
         self.autofocus = AutofocusController(self.camera_app, self.stage_app)
         
-        # Initialize the external command processor (keeps things tidy)
-        self.stage_cmd_processor = StageCommandProcessor(self.stage_app, 
-                                                         self.camera_app, 
-                                                         self.autofocus)
+        self.stage_cmd_processor = StageCommandProcessor(
+            self.stage_app, 
+            self.camera_app, 
+            self.autofocus
+        )
 
         print("[INIT] Stage initialized successfully")
+    
+    def initialize_api(self):
+        """Initialize REST API server."""
+        if not self.enable_api:
+            return
+            
+        print("[INIT] Initializing REST API server...")
+        self.api_server = ExperimentAPI(self)
+        print(f"[INIT] REST API will be available at http://localhost:{self.api_port}")
         
     def camera_stream_thread(self):
         """Thread 1: Run camera live stream."""
@@ -244,7 +241,6 @@ class DualThreadApp:
                     time.sleep(0.01)
                     continue
                 
-                # Render frame
                 combined = self.camera_app._render_frame(
                     image_data, 
                     max_width=1550, 
@@ -253,9 +249,7 @@ class DualThreadApp:
                 
                 cv2.imshow(window_title, combined)
                 
-                # Use very short waitKey to keep responsive
-                key = cv2.waitKey(30) & 0xFF
-                # Ignore 'q' key, only respond to stop_event
+                key = cv2.waitKey(1) & 0xFF
                 
             cv2.destroyAllWindows()
             self.camera.stop_streaming()
@@ -271,7 +265,6 @@ class DualThreadApp:
         
         try:
             while not self.stop_event.is_set():
-                # Check for commands
                 command = None
                 with self.queue_lock:
                     if self.command_queue:
@@ -280,23 +273,13 @@ class DualThreadApp:
                 if command:
                     self.stage_cmd_processor.process(command)
                 else:
-                    time.sleep(0.1)  # No commands, wait a bit
+                    time.sleep(0.1)
                     
         except Exception as e:
             print(f"[STAGE] Error: {e}")
         finally:
             print("[STAGE] Control stopped")
-       
-            
-    def print_help(self):
-        """Print available commands."""
-        # We now delegate to the command processor's help output for consistency
-        if self.stage_cmd_processor:
-            self.stage_cmd_processor._print_help()
-        else:
-            # Fallback help (very terse)
-            print("Type 'help' for command list (stage command processor not initialized yet)")
-                
+    
     def input_thread_func(self):
         """Thread 3: Handle CLI input."""
         print("[INPUT] CLI ready. Type 'help' for commands.")
@@ -304,7 +287,6 @@ class DualThreadApp:
         try:
             while not self.stop_event.is_set():
                 try:
-                    # Non-blocking input with timeout
                     user_input = input(">> ").strip()
                     
                     if not user_input:
@@ -315,17 +297,14 @@ class DualThreadApp:
                         self.stop_event.set()
                         break
                         
-                    # Add command to queue
                     with self.queue_lock:
                         self.command_queue.append(user_input)
                         
                 except EOFError:
-                    # Handle Ctrl+D
                     print("\n[INPUT] EOF received, stopping...")
                     self.stop_event.set()
                     break
                 except KeyboardInterrupt:
-                    # Handle Ctrl+C
                     print("\n[INPUT] Interrupted, stopping...")
                     self.stop_event.set()
                     break
@@ -334,6 +313,26 @@ class DualThreadApp:
             print(f"[INPUT] Error: {e}")
         finally:
             print("[INPUT] Input handler stopped")
+    
+    def api_server_thread(self):
+        """Thread 4: Run REST API server."""
+        if not self.enable_api or not self.api_server:
+            return
+            
+        print(f"[API] Starting REST API server on port {self.api_port}...")
+        try:
+            config = uvicorn.Config(
+                self.api_server.get_app(),
+                host="0.0.0.0",
+                port=self.api_port,
+                log_level="info"
+            )
+            server = uvicorn.Server(config)
+            server.run()
+        except Exception as e:
+            print(f"[API] Error: {e}")
+        finally:
+            print("[API] Server stopped")
             
     def run(self):
         """Main execution: start all threads."""
@@ -341,15 +340,27 @@ class DualThreadApp:
             # Initialize hardware
             self.initialize_camera()
             self.initialize_stage()
+            self.initialize_api()
             
             print("\n" + "="*70)
-            print("DUAL THREAD APPLICATION STARTING")
+            print("MULTI-THREAD APPLICATION WITH REST API")
             print("="*70)
             print("Thread 1: Camera live stream")
             print("Thread 2: Stage control (processes commands)")
             print("Thread 3: CLI input handler")
+            if self.enable_api:
+                print(f"Thread 4: REST API server (port {self.api_port})")
             print("="*70)
-            self.print_help()
+            self.stage_cmd_processor._print_help()
+            
+            if self.enable_api:
+                print(f"\n{'='*70}")
+                print("REST API ENDPOINTS")
+                print('='*70)
+                print(f"API Documentation: http://localhost:{self.api_port}/docs")
+                print(f"Health Check:      http://localhost:{self.api_port}/health")
+                print(f"Current Status:    http://localhost:{self.api_port}/status")
+                print('='*70 + '\n')
             
             # Create and start threads
             self.camera_thread = threading.Thread(
@@ -370,13 +381,24 @@ class DualThreadApp:
                 daemon=True
             )
             
+            if self.enable_api:
+                self.api_thread = threading.Thread(
+                    target=self.api_server_thread,
+                    name="APIThread",
+                    daemon=True
+                )
+            
             # Start all threads
             self.camera_thread.start()
-            time.sleep(0.5)  # Let camera window open first
+            time.sleep(0.5)
             self.stage_thread.start()
             self.input_thread.start()
             
-            # Wait for stop signal (from input thread or Ctrl+C)
+            if self.enable_api:
+                self.api_thread.start()
+                time.sleep(1)  # Give API server time to start
+            
+            # Wait for stop signal
             while not self.stop_event.is_set():
                 time.sleep(0.1)
             
@@ -419,18 +441,42 @@ class DualThreadApp:
 
 def main():
     """Entry point."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Microscopy Experiment Control with REST API"
+    )
+    parser.add_argument(
+        "--no-api",
+        action="store_true",
+        help="Disable REST API server"
+    )
+    parser.add_argument(
+        "--api-port",
+        type=int,
+        default=5000,
+        help="REST API server port (default: 5000)"
+    )
+    
+    args = parser.parse_args()
+    
     print("="*70)
-    print("DUAL THREAD: CAMERA STREAM + STAGE CONTROL + AUTOFOCUS")
+    print("MULTI-THREAD: CAMERA + STAGE + AUTOFOCUS + REST API")
     print("="*70)
     print("This will run:")
     print("  1. Camera live stream (GUI window)")
     print("  2. Stage control via CLI commands")
     print("  3. Autofocus with live plotting")
     print("  4. Interactive command prompt")
+    if not args.no_api:
+        print(f"  5. REST API server (port {args.api_port})")
     print("\nType 'quit' or press Ctrl+C to stop.")
     print("="*70 + "\n")
     
-    app = DualThreadApp()
+    app = DualThreadApp(
+        enable_api=not args.no_api,
+        api_port=args.api_port
+    )
     app.run()
     
     print("\n" + "="*70)

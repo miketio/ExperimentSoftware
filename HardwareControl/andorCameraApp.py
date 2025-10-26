@@ -4,7 +4,7 @@ import numpy as np
 import time
 from pathlib import Path
 from typing import Optional
-from andorCameraBase import AndorCameraBase
+from BaseClasses.andorCameraBase import AndorCameraBase
 
 
 class AndorCameraApp:

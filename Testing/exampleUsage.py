@@ -1,8 +1,8 @@
 # example_usage.py
 import argparse
 import time
-from xyzStageApp import XYZStageApp
-from mockStage import MockXYZStage
+from HardwareControl.xyzStageApp import XYZStageApp
+from Testing.mockStage import MockXYZStage
 
 # from smaract_stage import SmarActXYZStage  # uncomment when you want hardware usage
 
@@ -10,7 +10,7 @@ def main(use_mock=True):
     if use_mock:
         stage = MockXYZStage({'x': 1000, 'y': 2000, 'z': 0})
     else:
-        from smartactStage import SmarActXYZStage
+        from HardwareControl.SetupMotor.smartactStage import SmarActXYZStage
         stage = SmarActXYZStage()
 
     app = XYZStageApp(stage)
