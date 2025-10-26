@@ -29,10 +29,10 @@ matplotlib>=3.8.0
 # ===================================
 # Agent Framework (Optional - for future integration)
 # ===================================
-# agent-framework --pre
-# litellm
-# python-dotenv
-# requests
+agent-framework --pre
+litellm
+python-dotenv
+requests
 
 # ===================================
 # Development Tools (Optional)
