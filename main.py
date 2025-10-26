@@ -1,5 +1,5 @@
 import argparse
-from HardwareControl.dual_thread_with_api import DualThreadApp
+from HardwareControl.dualThreadApp import DualThreadApp
 
 def main():
     """Entry point."""
