@@ -78,7 +78,7 @@ class AutofocusController:
                 self.stage_app.move_abs(self.axis, pos)
                 time.sleep(0.1)
                 
-                self.camera_app.set_roi(400, 1200, 1300, 1000)
+                # self.camera_app.set_roi(400, 1200, 1300, 1000)
                 image = self.camera_app.acquire_image()
                 
                 metric = self.calculate_focus_metric(image)
