@@ -52,7 +52,7 @@ def generate_layout_config(ascii_file: str, output_file: str = "config/sample_la
         for col in range(blocks_per_row):
             # Calculate block offset
             u_offset = col * block_spacing
-            v_offset = row * block_spacing
+            v_offset = -1 * row * block_spacing
             
             print(f"Generating block {block_id} (row {row}, col {col})...")
             
@@ -76,21 +76,32 @@ def generate_layout_config(ascii_file: str, output_file: str = "config/sample_la
                     pos[1] + v_offset
                 ]
             
-            # Add waveguide 25 grating positions
-            wg25_left = find_waveguide_grating(waveguides, gratings, 25, 'left')
-            wg25_right = find_waveguide_grating(waveguides, gratings, 25, 'right')
+            # --- Option flag ---
+            include_all = False   # ← or False, depending on what you want
+
+            # --- Add gratings ---
+            # Store gratings in BLOCK-LOCAL coordinates (like waveguides)
+            # They will be converted to global coordinates during rendering
+            block["gratings"] = {}
             
-            if wg25_left:
-                block["gratings"]["wg25_left"] = [
-                    wg25_left[0] + u_offset,
-                    wg25_left[1] + v_offset
-                ]
-            
-            if wg25_right:
-                block["gratings"]["wg25_right"] = [
-                    wg25_right[0] + u_offset,
-                    wg25_right[1] + v_offset
-                ]
+            if include_all:
+                # Add *all* gratings in block-local coordinates
+                for i, g in enumerate(gratings):
+                    gy_local, gz_local = g['position']
+                    name = f"{g['side']}_grating_{i+1:02d}"
+                    # Store in block-local coordinates (NOT global)
+                    block["gratings"][name] = [gy_local, gz_local]
+            else:
+                # Add *only* the two gratings for waveguide 25
+                # Store in block-local coordinates from the template
+                wg25_left = find_waveguide_grating(waveguides, gratings, 25, 'left')
+                wg25_right = find_waveguide_grating(waveguides, gratings, 25, 'right')
+
+                if wg25_left:
+                    # Store in block-local coordinates
+                    block["gratings"]["wg25_left"] = list(wg25_left)
+                if wg25_right:
+                    block["gratings"]["wg25_right"] = list(wg25_right)
             
             # Add all waveguides for reference
             for wg in waveguides:
@@ -142,9 +153,15 @@ def generate_layout_config(ascii_file: str, output_file: str = "config/sample_la
 
 
 def load_layout_config(config_file: str = "config/sample_layout.json") -> Dict:
-    """Load layout configuration from JSON file."""
+    """Load layout configuration and convert block keys back to ints."""
     with open(config_file, 'r') as f:
-        return json.load(f)
+        layout = json.load(f)
+
+    blocks = layout.get("blocks")
+    if isinstance(blocks, dict):
+        layout["blocks"] = {int(k): v for k, v in blocks.items()}
+
+    return layout
 
 
 # Command-line interface

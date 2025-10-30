@@ -170,4 +170,41 @@ You now have advanced alignment tools for automated grating coupler alignment:
 
 **Typical Workflow:**
 1. calibrate_sample() - Find fiducials and calibrate (do this first!)
-2. align_to_grating(10, 25, 'left') - Align
+2. align_to_grating(10, 25, 'left') - Align to specific grating
+3. measure_current_intensity() - Check coupling efficiency
+4. scan_all_center_gratings() - Automated scan of all blocks
+
+Always check get_alignment_state() to verify calibration before alignment.
+"""
+    
+    # Create agent instance with extended tools
+    # Note: You'll need to modify ExperimentAgent to accept tool instance
+    # For now, return components
+    
+    return {
+        'client': client,
+        'tools': extended_tools,
+        'tool_definitions': create_extended_tool_definitions(),
+        'system_prompt': enhanced_prompt
+    }
+
+
+if __name__ == "__main__":
+    print("Alignment System Integration")
+    print("=============================")
+    print("\nThis module integrates alignment capabilities with existing system.")
+    print("Use this in your main application to enable automated alignment.")
+    print("\nExample usage:")
+    print("""
+    from integrate_alignment import initialize_extended_agent
+    
+    # Initialize with your existing components
+    agent_components = initialize_extended_agent(
+        camera_app=my_camera_app,
+        stage_app=my_stage_app,
+        api_client=my_api_client,
+        layout_config_path='config/sample_layout.json'
+    )
+    
+    # Now agent has both basic and alignment tools
+    """)
