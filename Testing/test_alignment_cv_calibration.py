@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# test_alignment_cv_calibration.py (REFINED: keep workflow + visuals, fix bugs)
+# test_alignment_cv_calibration.py (REFINED: keep workflow + visuals, fix bugs, ADD SEARCH VISUALIZATION)
 """
 Critical alignment tests A-B with bug fixes and preserved visualization + interactivity.
 
@@ -9,6 +9,7 @@ What I fixed compared to the earlier broken run:
      global = block_center + (local - block_size/2)  # local is relative to bottom-left
  - Ensure units consistency: design points converted from µm -> nm before calibration.
  - Keep interactive prompts, image saving, and whole plotting pipeline intact for debugging.
+ - ADDED: Visualization of all grid search images to debug fiducial detection
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -424,7 +425,7 @@ def test_b_blind_calibration():
     img2 = tester.captured_images['block20_br']
     center = (img2.shape[1] // 2, img2.shape[0] // 2)
     zoomed2 = img2[max(0, center[1] - zoom_size):min(img2.shape[0], center[1] + zoom_size),
-                   max(0, center[0] - zoom_size):min(img2.shape[1], center[0] + zoom_size)]
+                   max(0, center[0] - zoom_size):min(img1.shape[1], center[0] + zoom_size)]
     ax2.imshow(zoomed2, cmap='gray', vmin=0, vmax=3500, origin='lower')
     ax2.set_title('Block 20 Bottom-Right\n(Found)', fontweight='bold', fontsize=12)
     ax2.plot(zoom_size, zoom_size, 'r+', markersize=20, markeredgewidth=3)
@@ -511,6 +512,7 @@ def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000
                        step_nm=10000, label="Fiducial"):
     """
     Search for fiducial marker in a region using grid search.
+    NOW WITH VISUALIZATION of all captured images!
 
     Returns:
         dict with 'stage_Y', 'stage_Z', 'pixel_pos', 'confidence', 'image', 'method' or None if not found
@@ -527,6 +529,10 @@ def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000
     best_result = None
     best_confidence = -1.0
     total_positions = len(y_positions) * len(z_positions)
+    
+    # Store all images and detection results for visualization
+    search_data = []
+    
     checked = 0
 
     for Y in y_positions:
@@ -549,6 +555,15 @@ def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000
             
             result = tester.vt.find_fiducial_auto(img, expected_position=img_center, search_radius=150)
 
+            # Store data for visualization
+            search_data.append({
+                'Y': Y,
+                'Z': Z,
+                'image': img.copy(),
+                'detection': result,
+                'img_center': img_center
+            })
+
             if result and result.get('confidence', 0.0) > best_confidence:
                 best_confidence = result['confidence']
                 
@@ -560,12 +575,6 @@ def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000
                 offset_px_y = found_py - img_center_y
                 
                 # Convert to nm
-                # From _stage_to_pixel: px corresponds to Y, py corresponds to Z
-                # px = sensor_width/2 + dY/nm_per_pixel  =>  dY = (px - sensor_width/2) * nm_per_pixel
-                # So: offset_nm_Y = offset_px_x * nm_per_pixel (no sign flip needed)
-                # py = sensor_height/2 + dZ/nm_per_pixel  =>  dZ = (py - sensor_height/2) * nm_per_pixel
-                # So: offset_nm_Z = offset_px_y * nm_per_pixel (no sign flip needed)
-                
                 offset_nm_Y = offset_px_x * tester.camera.nm_per_pixel
                 offset_nm_Z = offset_px_y * tester.camera.nm_per_pixel
                 
@@ -585,6 +594,120 @@ def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000
                 }
 
     print()  # newline after progress
+    
+    # ========================================
+    # VISUALIZATION: Create grid of all search images
+    # ========================================
+    print(f"\n   📊 Creating search visualization with {len(search_data)} images...")
+    
+    # Calculate grid dimensions
+    n_images = len(search_data)
+    n_cols = min(8, int(np.ceil(np.sqrt(n_images))))
+    n_rows = int(np.ceil(n_images / n_cols))
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 2.5, n_rows * 2.5))
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1 or n_cols == 1:
+        axes = axes.reshape(n_rows, n_cols)
+    
+    fig.suptitle(f'Grid Search: {label} ({n_images} positions)', fontsize=14, fontweight='bold')
+    
+    for idx, data in enumerate(search_data):
+        row = idx // n_cols
+        col = idx % n_cols
+        ax = axes[row, col]
+        
+        img = data['image']
+        detection = data['detection']
+        img_center = data['img_center']
+        Y_stage = data['Y']
+        Z_stage = data['Z']
+        
+        # Normalize image to 8-bit for better visualization
+        img_norm = np.clip(img.astype(np.float32) / 4095.0 * 255, 0, 255).astype(np.uint8)
+        
+        # Zoom to center region
+        zoom_size = 200
+        cy, cx = img_center[1], img_center[0]
+        y1, y2 = max(0, cy - zoom_size), min(img.shape[0], cy + zoom_size)
+        x1, x2 = max(0, cx - zoom_size), min(img.shape[1], cx + zoom_size)
+        zoomed = img_norm[y1:y2, x1:x2]
+        
+        # Convert to RGB for colored markers
+        zoomed_rgb = cv2.cvtColor(zoomed, cv2.COLOR_GRAY2RGB)
+        
+        # Calculate relative center in zoomed image
+        rel_cx = cx - x1
+        rel_cy = cy - y1
+        
+        if detection:
+            # Mark detected position
+            found_px, found_py = detection['position']
+            rel_fx = found_px - x1
+            rel_fy = found_py - y1
+            
+            # Draw markers (using cv2 to draw on array)
+            cv2.drawMarker(zoomed_rgb, (int(rel_cx), int(rel_cy)), 
+                          (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
+            cv2.drawMarker(zoomed_rgb, (int(rel_fx), int(rel_fy)), 
+                          (255, 0, 0), cv2.MARKER_TILTED_CROSS, 25, 2)
+            
+            confidence = detection.get('confidence', 0.0)
+            method = detection.get('method', 'unknown')[:8]  # truncate
+            
+            # Color based on confidence
+            if confidence > 0.7:
+                border_color = 'green'
+                title_color = 'darkgreen'
+            elif confidence > 0.4:
+                border_color = 'orange'
+                title_color = 'darkorange'
+            else:
+                border_color = 'yellow'
+                title_color = 'goldenrod'
+            
+            ax.imshow(zoomed_rgb, origin='lower')
+            ax.set_title(f'✓ {method}\n{confidence:.2f}', 
+                        fontsize=8, color=title_color, fontweight='bold')
+            
+            # Highlight border if this is the best result
+            if best_result and detection['confidence'] == best_confidence:
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('lime')
+                    spine.set_linewidth(4)
+        else:
+            # No detection - mark center only
+            cv2.drawMarker(zoomed_rgb, (int(rel_cx), int(rel_cy)), 
+                          (128, 128, 128), cv2.MARKER_CROSS, 15, 1)
+            ax.imshow(zoomed_rgb, origin='lower')
+            ax.set_title('✗ not found', fontsize=8, color='gray')
+        
+        # Add axis labels with stage positions
+        ax.set_xlabel(f'Y={Y_stage/1000:.1f}µm', fontsize=7)
+        ax.set_ylabel(f'Z={Z_stage/1000:.1f}µm', fontsize=7)
+        
+        # Keep tick labels visible but make them smaller
+        ax.tick_params(labelsize=6)
+    
+    # Hide unused subplots
+    for idx in range(n_images, n_rows * n_cols):
+        row = idx // n_cols
+        col = idx % n_cols
+        axes[row, col].axis('off')
+    
+    plt.tight_layout()
+    
+    # Save with descriptive filename
+    safe_label = label.replace(' ', '_').replace('/', '_')
+    filename = f'search_grid_{safe_label}.png'
+    plt.savefig(filename, dpi=120, bbox_inches='tight')
+    print(f"   💾 Saved search visualization: {filename}")
+    plt.show()
+    
+    # ========================================
+    # Print summary and move to corrected position
+    # ========================================
     if best_result:
         print(f"   ✅ {label} found!")
         print(f"      Confidence: {best_result['confidence']:.3f}")
@@ -594,66 +717,106 @@ def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000
         print(f"      Pixel offset: {best_result['pixel_offset']}")
         print(f"      Stage offset (nm): {best_result['stage_offset_nm']}")
         print(f"      Final stage position: Y={best_result['stage_Y']}, Z={best_result['stage_Z']} nm")
+        
+        # Move stage to the corrected position where fiducial is centered
+        print(f"      📍 Moving stage to corrected position...")
+        tester.stage.move_abs('y', best_result['stage_Y'])
+        tester.stage.move_abs('z', best_result['stage_Z'])
+        
+        # Take verification image at corrected position
+        verification_img = tester.camera.acquire_single_image()
+        best_result['verification_image'] = verification_img
+        
+        # Verify centering
+        img_center = (verification_img.shape[1] // 2, verification_img.shape[0] // 2)
+        verify_result = tester.vt.find_fiducial_auto(verification_img, 
+                                                     expected_position=img_center, 
+                                                     search_radius=150)
+        if verify_result:
+            verify_px = verify_result['position']
+            verify_offset_px = (verify_px[0] - img_center[0], verify_px[1] - img_center[1])
+            verify_offset_nm = (verify_offset_px[0] * tester.camera.nm_per_pixel,
+                               verify_offset_px[1] * tester.camera.nm_per_pixel)
+            print(f"      ✓ Verification: offset = {verify_offset_px} px = ({verify_offset_nm[0]:.0f}, {verify_offset_nm[1]:.0f}) nm")
+            best_result['verification_offset_px'] = verify_offset_px
+            best_result['verification_offset_nm'] = verify_offset_nm
+        else:
+            print(f"      ⚠️  Warning: Could not detect fiducial in verification image!")
     else:
         print(f"   ❌ {label} not found in search region")
+    # ========================================
+    # Return verification-based dictionary
+    # ========================================
+    if best_result and 'verification_image' in best_result:
+        verification_output = {
+            'stage_Y': best_result['stage_Y'],
+            'stage_Z': best_result['stage_Z'],
+            'pixel_pos': verify_result['position'] if verify_result else None,
+            'pixel_offset': verify_offset_px if verify_result else None,
+            'stage_offset_nm': verify_offset_nm if verify_result else None,
+            'confidence': verify_result['confidence'] if verify_result else None,
+            'method': verify_result['method'] if verify_result else None,
+            'image': best_result['verification_image'].copy(),
+        }
+        return verification_output
+    else:
+        print("   ⚠️  No verification image available, returning None.")
+        return None
 
-    return best_result
+
+
 # =============================================================================
-# MAIN TEST RUNNER (keeps interactive prompts similar to original)
+# MAIN EXECUTION ENTRY POINT
 # =============================================================================
+
 def main():
-    """Run tests A and B in sequence with user interaction preserved."""
-    print("\n" + "=" * 70)
-    print("ALIGNMENT SYSTEM TESTS A-B")
-    print("=" * 70)
-    print("\nThese tests verify:")
-    print("  A. CV detection works on mock camera images")
-    print("  B. Blind calibration (without ground truth)")
-    print("\n(Images & plots are saved for debugging.)")
+    """Run alignment CV detection and blind calibration tests sequentially."""
+    print("\n" + "=" * 80)
+    print("RUNNING ALIGNMENT SYSTEM TESTS")
+    print("=" * 80)
 
-    tests = [
-        ("Test A: CV Detection", test_a_cv_detection),
-        ("Test B: Blind Calibration", test_b_blind_calibration)
-    ]
+    start_time = time.time()
 
-    results = []
+    try:
+        # ---------------------------------------------------------------
+        # TEST A: CV Detection on Mock Images
+        # ---------------------------------------------------------------
+        print("\n🚀 Starting Test A: CV Detection on Mock Images...")
+        success_a, tester_a = test_a_cv_detection()
+        if not success_a:
+            print("\n❌ Test A failed — stopping further tests.")
+            print("=" * 80)
+            return
 
-    for name, test_func in tests:
-        print(f"\n{'╔' * 70}")
-        input(f"Press Enter to run {name}...")  # preserve interactive behavior
+        # ---------------------------------------------------------------
+        # TEST B: Blind Calibration
+        # ---------------------------------------------------------------
+        print("\n🚀 Starting Test B: Blind Calibration...")
+        success_b, tester_b = test_b_blind_calibration()
 
-        try:
-            ok, tester_or = test_func()
-            results.append((name, ok))
-            if ok is False:
-                print(f"\n❌ {name} FAILED")
-                cont = input("Continue with remaining tests? (y/n): ")
-                if cont.lower() != 'y':
-                    break
-        except Exception as e:
-            print(f"\n❌ {name} CRASHED: {e}")
-            import traceback
-            traceback.print_exc()
-            results.append((name, False))
-            break
+        # ---------------------------------------------------------------
+        # SUMMARY
+        # ---------------------------------------------------------------
+        total_time = time.time() - start_time
+        print("\n" + "=" * 80)
+        print("FINAL TEST SUMMARY")
+        print("=" * 80)
+        print(f"Test A (CV Detection): {'✅ PASSED' if success_a else '❌ FAILED'}")
+        print(f"Test B (Blind Calibration): {'✅ PASSED' if success_b else '❌ FAILED'}")
+        print(f"\nTotal runtime: {total_time:.2f} seconds")
 
-    # Summary
-    print(f"\n{'=' * 70}")
-    print("TEST SUMMARY")
-    print('=' * 70)
-    for name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status} - {name}")
+        if success_a and success_b:
+            print("\n🎉 ALL TESTS PASSED SUCCESSFULLY!")
+        else:
+            print("\n⚠️ Some tests failed. Check logs and saved plots for debugging.")
 
-    passed = sum(1 for _, r in results if r)
-    failed = sum(1 for _, r in results if not r)
-    print(f"\nPassed: {passed}, Failed: {failed}")
-
-    if failed == 0 and passed > 0:
-        print(f"\n🎉 All tests passed! Alignment system works!")
-
-    return 0
+    except Exception as e:
+        print("\n💥 FATAL ERROR during testing!")
+        print(f"Exception: {e}")
+        import traceback
+        traceback.print_exc()
 
 
+# Standard Python entry point
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

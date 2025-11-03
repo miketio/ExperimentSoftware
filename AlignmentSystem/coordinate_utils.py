@@ -298,3 +298,44 @@ if __name__ == "__main__":
     print(f"  Round-trip error: {error:.9f} µm")
     
     print(f"\n✅ All coordinate conversion tests complete!")
+
+if __name__ == "__main__":
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from Testing.test_alignment_cv_calibration import AlignmentTester
+    from config.layout_config_generator_v2 import load_layout_config_v2
+    from config.layout_config_generator_v2 import plot_layout_v2
+    
+    tester = AlignmentTester()
+    tester.setup()
+    print("=== Coordinate Converter + Camera Visual Test ===")
+
+    # --- Load layout and set up converter ---
+    layout = load_layout_config_v2("config/mock_layout.json")
+    plot_layout_v2(layout, "config/mock_layout.png")
+    converter = CoordinateConverter(layout)
+    gt = layout["simulation_ground_truth"]
+    converter.set_transformation(gt["rotation_deg"], tuple(gt["translation_nm"]))
+    print(f"Transformation: {converter.rotation_deg:.3f}° rotation, "
+          f"translation {tuple(converter.translation_nm)} nm")
+
+
+    # --- Acquire simulated image ---
+    img = tester.camera.acquire_single_image()
+
+    print("Acquired simulated camera image with fiducials.")
+    print(f"Image shape: {img.shape}, dtype={img.dtype}")
+
+    # --- Display image with matplotlib ---
+    plt.figure(figsize=(8, 8))
+    plt.imshow(img, cmap='gray', origin='lower')
+    plt.title("Simulated Fiducial Markers (Top-Left should look like 'Γ')")
+    plt.xlabel("Y (pixels)")
+    plt.ylabel("Z (pixels)")
+    plt.tight_layout()
+    plt.show()
+
+    print("\n✅ Done. Check the image window — "
+          "the top-left marker should be Γ-shaped (not L-shaped).")
+
+

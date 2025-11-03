@@ -167,6 +167,106 @@ def load_layout_config_v2(config_file: str = "config/mock_layout.json") -> Dict:
     
     return layout
 
+def plot_layout_v2(layout: Dict, output_path: str = "config/mock_layout.png"):
+    """
+    Visualize the block layout (design + simulated ground truth) and save as an image,
+    automatically labeling corners (top_left, bottom_left, etc.) from layout data.
+
+    Args:
+        layout: Layout configuration dictionary.
+        output_path: File path to save the PNG image.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from AlignmentSystem.coordinate_utils import CoordinateConverter
+
+    block_size = layout["block_layout"]["block_size"]
+    blocks = layout["blocks"]
+    rotation_deg = layout["simulation_ground_truth"]["rotation_deg"]
+    translation_nm = layout["simulation_ground_truth"]["translation_nm"]
+    translation_um = (translation_nm[0] / 1000.0, translation_nm[1] / 1000.0)
+
+    # Initialize converter
+    converter = CoordinateConverter(layout)
+    converter.set_transformation(rotation_deg, translation_nm)
+
+    plt.figure(figsize=(12, 10))
+    plt.title(f"Layout: {layout['design_name']}\n"
+              f"Rotation = {rotation_deg:.2f}°, Translation = {translation_um} µm")
+    plt.xlabel("u (µm)")
+    plt.ylabel("v (µm)")
+
+    corner_colors = {
+        "top_left": "orange",
+        "top_right": "green",
+        "bottom_left": "blue",
+        "bottom_right": "red"
+    }
+
+    for bid, block in blocks.items():
+        u_center, v_center = block["design_position"]
+
+        # --- Design rectangle (unrotated)
+        u0, v0 = u_center - block_size / 2, v_center - block_size / 2
+        rect_design = plt.Rectangle((u0, v0), block_size, block_size,
+                                    edgecolor="navy", facecolor="none", lw=0.8)
+        plt.gca().add_patch(rect_design)
+        plt.text(u_center, v_center, str(bid),
+                 ha="center", va="center", fontsize=7, color="navy")
+
+        # --- Stage rectangle (rotated + translated)
+        stage_center_nm = converter.design_to_stage(u_center, v_center)
+        stage_center = np.array(stage_center_nm) / 1000.0  # → µm
+
+        u0r, v0r = stage_center - block_size / 2
+        rect_stage = plt.Rectangle((u0r, v0r), block_size, block_size,
+                                   edgecolor="crimson", facecolor="none", lw=0.8, ls="--")
+        plt.gca().add_patch(rect_stage)
+
+        # Line between centers
+        plt.plot([u_center, stage_center[0]], [v_center, stage_center[1]],
+                 color="gray", lw=0.5, alpha=0.6)
+
+        # --- Fiducials (use layout data)
+        for corner, (u_local, v_local) in block["fiducials"].items():
+            color = corner_colors.get(corner, "black")
+
+            # Global (design) coordinates
+            design_corner = np.array([u0 + u_local, v0 + v_local])
+
+            # Stage coordinates (convert nm → µm)
+            stage_corner_nm = converter.block_local_to_stage(bid, u_local, v_local)
+            stage_corner = np.array(stage_corner_nm) / 1000.0
+
+            # Plot design corner
+            plt.scatter(design_corner[0], design_corner[1], s=12, c=color, marker='o',
+                        label=f"{corner} (design)" if bid == 1 else "")
+            plt.text(design_corner[0], design_corner[1],
+                     corner.replace("_", "\n"), fontsize=6,
+                     ha="center", va="center", color=color)
+
+            # Plot stage corner
+            plt.scatter(stage_corner[0], stage_corner[1], s=12, c=color, marker='x',
+                        label=f"{corner} (stage)" if bid == 1 else "")
+            plt.text(stage_corner[0], stage_corner[1],
+                     corner.replace("_", "\n"), fontsize=6,
+                     ha="center", va="center", color=color)
+
+            # Connect them
+            plt.plot([design_corner[0], stage_corner[0]],
+                     [design_corner[1], stage_corner[1]],
+                     color=color, lw=0.4, alpha=0.5)
+
+    plt.legend(loc="upper right", fontsize=7, frameon=True)
+    plt.axis("equal")
+    plt.grid(True, ls="--", alpha=0.4)
+    plt.tight_layout()
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=300)
+    plt.show()
+
+    print(f"🖼️ Layout image with labeled fiducial corners saved to: {output_path}")
 
 # Test/example usage
 if __name__ == "__main__":
@@ -213,3 +313,5 @@ if __name__ == "__main__":
     if 'wg25_left' in block10['gratings']:
         grating = block10['gratings']['wg25_left']
         print(f"  WG25 left grating (local): {grating['position']} µm")
+
+    plot_layout_v2(layout, "config/mock_layout.png")

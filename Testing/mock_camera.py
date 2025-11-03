@@ -269,23 +269,18 @@ class MockCamera(AndorCameraBase):
         #  - top_left:    horizontal +u, vertical +v
         #  - bottom_right:horizontal -u, vertical -v
         #  - top_right:   horizontal -u, vertical +v
-        if corner == 'top_left':
+        if corner == 'bottom_left':
             horiz_delta = ( size_um,  0.0)
-            vert_delta  = ( 0.0, -size_um)
-        elif corner == 'bottom_left':
+            vert_delta  = ( 0.0, +size_um)
+        elif corner == 'top_left':
             horiz_delta = ( size_um,  0.0)
-            vert_delta  = ( 0.0,  size_um)
-        elif corner == 'top_right':
-            horiz_delta = (-size_um,  0.0)
             vert_delta  = ( 0.0, -size_um)
         elif corner == 'bottom_right':
             horiz_delta = (-size_um,  0.0)
-            vert_delta  = ( 0.0,  size_um)
-        else:
-            # unknown corner, fallback to no rotation (shouldn't normally happen)
-            self._draw_l_marker(img, int(round(Y_nm)), int(round(Z_nm)), corner,
-                                size=size_px, thickness=thickness_px, brightness=brightness)
-            return
+            vert_delta  = ( 0.0, +size_um)
+        elif corner == 'top_right':
+            horiz_delta = (-size_um,  0.0)
+            vert_delta  = ( 0.0, -size_um)
 
         # Center in local coords is local_pos (u_local, v_local) in µm
         u0, v0 = local_pos[0], local_pos[1]
@@ -382,45 +377,6 @@ class MockCamera(AndorCameraBase):
     # Drawing Primitives
     # =====================================================================
     
-    def _draw_l_marker(self, img, px, py, corner, size=40, thickness=8, brightness=3000):
-        """Draw L-shaped fiducial marker."""
-        if not (0 <= px < img.shape[1] and 0 <= py < img.shape[0]):
-            return
-        
-        th = thickness // 2
-        
-        if corner == 'bottom_left':
-            # Horizontal arm to the right
-            img[max(0, py-th):min(img.shape[0], py+th), 
-                max(0, px):min(img.shape[1], px+size)] = brightness
-            # Vertical arm downward
-            img[max(0, py):min(img.shape[0], py+size),
-                max(0, px-th):min(img.shape[1], px+th)] = brightness
-        
-        elif corner == 'bottom_right':
-            # Horizontal arm to the left
-            img[max(0, py-th):min(img.shape[0], py+th),
-                max(0, px-size):min(img.shape[1], px)] = brightness
-            # Vertical arm downward
-            img[max(0, py):min(img.shape[0], py+size),
-                max(0, px-th):min(img.shape[1], px+th)] = brightness
-        
-        elif corner == 'top_left':
-            # Horizontal arm to the right
-            img[max(0, py-th):min(img.shape[0], py+th),
-                max(0, px):min(img.shape[1], px+size)] = brightness
-            # Vertical arm upward
-            img[max(0, py-size):min(img.shape[0], py),
-                max(0, px-th):min(img.shape[1], px+th)] = brightness
-        
-        elif corner == 'top_right':
-            # Horizontal arm to the left
-            img[max(0, py-th):min(img.shape[0], py+th),
-                max(0, px-size):min(img.shape[1], px)] = brightness
-            # Vertical arm upward
-            img[max(0, py-size):min(img.shape[0], py),
-                max(0, px-th):min(img.shape[1], px+th)] = brightness
-    
     def _fill_polygon(self, img, pixels, brightness=3000):
         """Fill polygon using OpenCV."""
         pts = np.array(pixels, dtype=np.int32)
@@ -449,3 +405,87 @@ class MockCamera(AndorCameraBase):
             img = cv2.GaussianBlur(img, (0, 0), sigma)
         
         return img
+    
+
+if __name__ == "__main__":
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from AlignmentSystem.coordinate_utils import CoordinateConverter
+    from config.layout_config_generator_v2 import load_layout_config_v2, plot_layout_v2
+
+    print("[TEST] Running MockCamera standalone test...")
+
+    # # --- Load layout and ground-truth transformation ---
+    layout = load_layout_config_v2("config/mock_layout.json")
+    converter = CoordinateConverter(layout)
+    plot_layout_v2(layout, "config/mock_layout.png")
+    gt = layout["simulation_ground_truth"]
+    converter.set_transformation(gt["rotation_deg"], tuple(gt["translation_nm"]))
+
+    # --- Create dummy stage (centered) ---
+    class DummyStage:
+        def __init__(self):
+            self.pos = {"x": 0, "y": 0, "z": 0}
+        def get_pos(self, axis):
+            return self.pos[axis]
+        def set_pos(self, axis, val):
+            self.pos[axis] = val
+
+    stage = DummyStage()
+
+    # --- Initialize camera ---
+    cam = MockCamera(stage_ref=stage)
+    cam.converter = converter
+
+    # ====================================================
+    # 1️⃣ Test: Single fiducial rendering (top-left)
+    # ====================================================
+    print("[TEST] Generating single top-left fiducial image...")
+
+    img_single = np.zeros((cam.sensor_height, cam.sensor_width), dtype=np.uint16)
+    block_id = list(layout["blocks"].keys())[0]
+    block = layout["blocks"][block_id]
+    fid = block["fiducials"]["top_left"]
+
+    cam._render_fiducial(
+        img_single,
+        block_id,
+        fid,
+        "top_left",
+        Y_center_nm=0,
+        Z_center_nm=0,
+        Y_min=-1e6, Y_max=1e6,
+        Z_min=-1e6, Z_max=1e6,
+    )
+
+    plt.figure(figsize=(5, 5))
+    plt.imshow(img_single, cmap="gray", origin="lower")
+    plt.title("Single Fiducial (Top Left)")
+    plt.tight_layout()
+    plt.savefig("fiducial_test_top_left.png", bbox_inches="tight", pad_inches=0)
+    plt.show()
+    print("[TEST] Saved -> fiducial_test_top_left.png")
+
+    # ====================================================
+    # 2️⃣ Test: Full image acquisition (mock frame)
+    # ====================================================
+    print("[TEST] Generating full mock camera image via acquire_single_image()...")
+
+    # Center the stage roughly around the layout center
+    stage.set_pos("y", 0)
+    stage.set_pos("z", 0)
+    stage.set_pos("x", 0)
+
+    img_full = cam.acquire_single_image()
+
+    plt.figure(figsize=(8, 8))
+    plt.imshow(img_full, cmap="gray", origin="lower")  # 'lower' shows correct physical orientation
+    plt.title("Mock Camera - acquire_single_image() Output")
+    plt.xlabel("Y (pixels)")
+    plt.ylabel("Z (pixels)")
+    plt.tight_layout()
+    plt.savefig("mock_camera_acquire_single_image.png", dpi=200)
+    plt.show()
+
+    print("[TEST] Saved -> mock_camera_acquire_single_image.png")
+    print("[TEST] Done.")
