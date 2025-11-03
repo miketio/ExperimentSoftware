@@ -6,8 +6,8 @@ Subclass of AndorCameraBase for drop-in replacement.
 import numpy as np
 import cv2
 from typing import Optional, Tuple
-from BaseClasses.andorCameraBase import AndorCameraBase
-from AlignmentSystem.coordinate_utils import CoordinateConverter
+from HardwareControl.CameraControl.andorCameraBase import AndorCameraBase
+from AlignmentSystem.coordinate_transform import CoordinateTransform
 from config.layout_config_generator_v2 import load_layout_config_v2
 
 
@@ -35,7 +35,7 @@ class MockCamera(AndorCameraBase):
         
         # Load layout and setup coordinate converter
         self.layout = load_layout_config_v2(layout_config_path)
-        self.converter = CoordinateConverter(self.layout)
+        self.converter = CoordinateTransform(self.layout)
         
         # Use ground truth transformation from layout (simulation only!)
         ground_truth = self.layout['simulation_ground_truth']
@@ -398,10 +398,10 @@ class MockCamera(AndorCameraBase):
             Blurred image
         """
         # Blur increases with distance from X=0
-        blur_coefficient = 0.001  # sigma per 1000nm of defocus
+        blur_coefficient = 0.1  # sigma per 1000nm of defocus
         sigma = abs(X_nm) * blur_coefficient / 1000.0
         
-        if sigma > 0.5:  # Only blur if significant
+        if sigma > 0:  # Only blur if significant
             img = cv2.GaussianBlur(img, (0, 0), sigma)
         
         return img
@@ -410,14 +410,13 @@ class MockCamera(AndorCameraBase):
 if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt
-    from AlignmentSystem.coordinate_utils import CoordinateConverter
     from config.layout_config_generator_v2 import load_layout_config_v2, plot_layout_v2
 
     print("[TEST] Running MockCamera standalone test...")
 
     # # --- Load layout and ground-truth transformation ---
     layout = load_layout_config_v2("config/mock_layout.json")
-    converter = CoordinateConverter(layout)
+    converter = CoordinateTransform(layout)
     plot_layout_v2(layout, "config/mock_layout.png")
     gt = layout["simulation_ground_truth"]
     converter.set_transformation(gt["rotation_deg"], tuple(gt["translation_nm"]))

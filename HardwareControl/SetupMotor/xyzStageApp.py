@@ -1,5 +1,5 @@
 # xyzstage_app.py
-from BaseClasses.xyzStageBase import XYZStageBase
+from HardwareControl.SetupMotor.xyzStageBase import XYZStageBase
 from typing import Iterable, Tuple
 
 class XYZStageApp:

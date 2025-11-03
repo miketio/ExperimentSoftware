@@ -1,7 +1,7 @@
 # example_usage.py
 import argparse
 import time
-from HardwareControl.xyzStageApp import XYZStageApp
+from HardwareControl.SetupMotor.xyzStageApp import XYZStageApp
 from HardwareControl.SetupMotor.mockStage import MockXYZStage
 
 # from smaract_stage import SmarActXYZStage  # uncomment when you want hardware usage

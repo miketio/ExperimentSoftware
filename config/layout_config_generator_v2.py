@@ -178,7 +178,7 @@ def plot_layout_v2(layout: Dict, output_path: str = "config/mock_layout.png"):
     """
     import matplotlib.pyplot as plt
     import numpy as np
-    from AlignmentSystem.coordinate_utils import CoordinateConverter
+    from AlignmentSystem.coordinate_transform import CoordinateTransform
 
     block_size = layout["block_layout"]["block_size"]
     blocks = layout["blocks"]
@@ -187,7 +187,7 @@ def plot_layout_v2(layout: Dict, output_path: str = "config/mock_layout.png"):
     translation_um = (translation_nm[0] / 1000.0, translation_nm[1] / 1000.0)
 
     # Initialize converter
-    converter = CoordinateConverter(layout)
+    converter = CoordinateTransform(layout)
     converter.set_transformation(rotation_deg, translation_nm)
 
     plt.figure(figsize=(12, 10))

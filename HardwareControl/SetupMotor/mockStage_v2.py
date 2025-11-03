@@ -6,7 +6,7 @@ Notifies connected camera when stage moves so camera can update its FOV.
 import time
 import numpy as np
 from typing import Optional, Dict
-from BaseClasses.xyzStageBase import XYZStageBase
+from HardwareControl.SetupMotor.xyzStageBase import XYZStageBase
 
 
 class MockXYZStage(XYZStageBase):

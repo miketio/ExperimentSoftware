@@ -1,5 +1,5 @@
 from HardwareControl.CameraControl.zylaCamera import ZylaCamera
-from HardwareControl.andorCameraApp import AndorCameraApp
+from HardwareControl.CameraControl.andorCameraApp import AndorCameraApp
 
 # with ZylaCamera() as cam:
 #     app = AndorCameraApp(cam)

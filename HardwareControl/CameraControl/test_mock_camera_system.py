@@ -300,7 +300,7 @@ def test_5_autofocus_simulation():
         stage.move_abs('z', wg25_pos[1])
         
         # Scan X axis (focus axis)
-        X_positions = np.linspace(-10000, 10000, 21)  # -10µm to +10µm
+        X_positions = np.linspace(-100000, 100000, 21)  # -10µm to +10µm
         focus_metrics = []
         
         print(f"\n🔍 Scanning X axis for focus...")

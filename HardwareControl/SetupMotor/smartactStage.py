@@ -3,7 +3,7 @@ import ctypes as ct
 import time
 from typing import Dict, Optional
 
-from BaseClasses.xyzStageBase import XYZStageBase
+from HardwareControl.SetupMotor.xyzStageBase import XYZStageBase
 
 # Import your MCS wrapper here; name must match your environment
 import HardwareControl.SetupMotor.MCSControl_PythonWrapper as mcs

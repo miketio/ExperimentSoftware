@@ -18,9 +18,9 @@ import uvicorn
 from pathlib import Path
 
 from HardwareControl.CameraControl.zylaCamera import ZylaCamera
-from HardwareControl.andorCameraApp import AndorCameraApp
+from HardwareControl.CameraControl.andorCameraApp import AndorCameraApp
 from HardwareControl.SetupMotor.smartactStage import SmarActXYZStage
-from HardwareControl.xyzStageApp import XYZStageApp
+from HardwareControl.SetupMotor.xyzStageApp import XYZStageApp
 from HardwareControl.stage_commands import StageCommandProcessor
 from RESTAPI.api_server import ExperimentAPI
 from HardwareControl.autofocusController import AutofocusController

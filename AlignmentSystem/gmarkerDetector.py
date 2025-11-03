@@ -318,7 +318,7 @@ class GMarkerDetector:
         if scales is None:
             scales = [0.6, 0.8, 1.0, 1.2, 1.5]
         if angles is None:
-            angles = list(range(-90, 91, 15))  # every 15 degrees
+            angles = list(range(-90, 181, 15))  # every 15 degrees
 
         candidates = self._template_match_candidates(patch, scales, angles, top_k=top_k)
         if not candidates:
@@ -394,7 +394,7 @@ if __name__ == "__main__":
     det = GMarkerDetector(base_size=200, arm_length=80, arm_thickness=14)
 
     # Create a rotated template and paste it into the image at an arbitrary position
-    tpl = det._generate_gamma_template(size=200, arm_len=80, thickness=14, orientation_deg=30)
+    tpl = det._generate_gamma_template(size=200, arm_len=80, thickness=14, orientation_deg=-90)
     tpl_bin = (tpl > 20).astype(np.uint16) * 3000  # brightness scaled like mock camera
 
     # paste center position (make sure it fits)

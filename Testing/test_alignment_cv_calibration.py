@@ -23,7 +23,6 @@ from HardwareControl.CameraControl.mock_camera import MockCamera
 
 # Alignment components
 from config.layout_config_generator_v2 import load_layout_config_v2
-from AlignmentSystem.coordinate_utils import CoordinateConverter
 from AlignmentSystem.cv_tools import VisionTools
 from AlignmentSystem.coordinate_transform import CoordinateTransform
 
@@ -59,7 +58,7 @@ class AlignmentTester:
         print(f"✅ Layout loaded: {self.layout['design_name']}")
 
         # Ground truth converter for simulation
-        self.gt_converter = CoordinateConverter(self.layout)
+        self.gt_converter = CoordinateTransform(self.layout)
         gt = self.layout['simulation_ground_truth']
         self.gt_converter.set_transformation(gt['rotation_deg'], tuple(gt['translation_nm']))
         print(f"✅ Ground truth set: {gt['rotation_deg']}° rotation, {gt['translation_nm']} nm translation")
@@ -229,7 +228,7 @@ class AlignmentTester:
 
 
 
-    def plot_search_progress(self, search_data=None, label=None, best_result=None, best_confidence=-1.0):
+    def _plot_search_progress(self, search_data=None, label=None, best_result=None, best_confidence=-1.0):
         # ========================================
         # VISUALIZATION: Create grid of all search images
         # ========================================
@@ -653,7 +652,7 @@ def test_b_blind_calibration():
     print(f"Calibration error: rotation_err={rotation_error:.4f}°, translation_err={translation_error:.1f} nm")
 
     # store calibrated converter
-    tester.calibrated_converter = CoordinateConverter(tester.layout)
+    tester.calibrated_converter = CoordinateTransform(tester.layout)
     tester.calibrated_converter.set_transformation(
         calibration_result['angle_deg'],
         tuple(calibration_result['translation_nm'])

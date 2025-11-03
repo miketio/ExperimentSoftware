@@ -1,5 +1,5 @@
 # mock_stage.py
-from BaseClasses.xyzStageBase import XYZStageBase
+from HardwareControl.SetupMotor.xyzStageBase import XYZStageBase
 import time
 
 class MockXYZStage(XYZStageBase):
