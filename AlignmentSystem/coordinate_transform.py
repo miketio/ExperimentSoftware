@@ -57,7 +57,7 @@ class CoordinateTransform:
         design = np.array(design_points, dtype=float)  # µm
         
         # Convert design to nm
-        design_nm = design * self.scale_factor
+        design_nm = design      # already in nm
         measured_nm = measured  # already in nm
         
         if len(measured) == 2:
@@ -108,7 +108,7 @@ class CoordinateTransform:
         errors = []
         for i in range(2):
             predicted = self.rotation_matrix @ design[i] + self.translation
-            error = np.linalg.norm(np.array(predicted) - measured[i])
+            error = np.sqrt(np.linalg.norm(np.array(predicted) - measured[i]))
             errors.append(error)
         
         return {
@@ -165,7 +165,7 @@ class CoordinateTransform:
         errors = []
         for i in range(n):
             predicted = self.rotation_matrix @ design[i] + self.translation
-            error = np.linalg.norm(np.array(predicted) - measured[i])
+            error = np.sqrt(np.linalg.norm(np.array(predicted) - measured[i]))
             errors.append(error)
         
         return {
