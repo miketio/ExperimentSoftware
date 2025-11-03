@@ -8,7 +8,7 @@ import json
 from typing import Optional, Dict, Any
 from openai import OpenAI
 
-from Testing.test_api_client import ExperimentAPIClient
+from RESTAPI.test_api_client import ExperimentAPIClient
 from AgentFramework.agentTools import ExperimentTools, create_tool_definitions
 from AgentFramework.agentConfig import (
     LITELLM_BASE_URL,

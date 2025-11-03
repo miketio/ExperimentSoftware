@@ -18,8 +18,8 @@ import cv2
 import time
 
 # Mock hardware
-from Testing.mockStage_v2 import MockXYZStage
-from Testing.mock_camera import MockCamera
+from HardwareControl.SetupMotor.mockStage_v2 import MockXYZStage
+from HardwareControl.CameraControl.mock_camera import MockCamera
 
 # Alignment components
 from config.layout_config_generator_v2 import load_layout_config_v2
@@ -78,6 +78,267 @@ class AlignmentTester:
         print(f"   Camera FOV: {self.camera.sensor_width * self.camera.nm_per_pixel / 1000:.1f} µm")
         print(f"   Resolution: {self.camera.nm_per_pixel} nm/pixel")
 
+    def search_for_fiducial(self, center_y_nm, center_z_nm, search_radius_nm=50000,
+                        step_nm=10000, label="Fiducial", plot_progress=True):
+        """
+        Search for fiducial marker in a region using grid search.
+        NOW WITH VISUALIZATION of all captured images!
+
+        Returns:
+            dict with 'stage_Y', 'stage_Z', 'pixel_pos', 'confidence', 'image', 'method' or None if not found
+        """
+        print(f"   Searching in {search_radius_nm / 1000:.0f} µm radius with {step_nm / 1000:.0f} µm steps...")
+
+        y_positions = np.arange(center_y_nm - search_radius_nm,
+                                center_y_nm + search_radius_nm + 0.5 * step_nm,
+                                step_nm)
+        z_positions = np.arange(center_z_nm - search_radius_nm,
+                                center_z_nm + search_radius_nm + 0.5 * step_nm,
+                                step_nm)
+
+        best_result = None
+        best_confidence = -1.0
+        total_positions = len(y_positions) * len(z_positions)
+        
+        # Store all images and detection results for visualization
+        search_data = []
+        
+        checked = 0
+
+        for Y in y_positions:
+            for Z in z_positions:
+                checked += 1
+                if checked % 10 == 0:
+                    print(f"   Progress: {checked}/{total_positions} positions checked...", end='\r')
+
+                # Move stage
+                self.stage.move_abs('y', int(round(Y)))
+                self.stage.move_abs('z', int(round(Z)))
+
+                # Capture image
+                img = self.camera.acquire_single_image()
+
+                # Look for fiducial near center
+                img_center_x = img.shape[1] // 2
+                img_center_y = img.shape[0] // 2
+                img_center = (img_center_x, img_center_y)
+                
+                result = self.vt.find_fiducial_auto(img, expected_position=img_center, search_radius=150)
+
+                # Store data for visualization
+                search_data.append({
+                    'Y': Y,
+                    'Z': Z,
+                    'image': img.copy(),
+                    'detection': result,
+                    'img_center': img_center
+                })
+
+                if result and result.get('confidence', 0.0) > best_confidence:
+                    best_confidence = result['confidence']
+                    
+                    # Calculate actual stage position from pixel offset
+                    found_px, found_py = result['position']
+                    
+                    # Pixel offset from center
+                    offset_px_x = found_px - img_center_x
+                    offset_px_y = found_py - img_center_y
+                    
+                    # Convert to nm
+                    offset_nm_Y = offset_px_x * self.camera.nm_per_pixel
+                    offset_nm_Z = offset_px_y * self.camera.nm_per_pixel
+                    
+                    # Actual stage position = grid position + pixel offset
+                    actual_Y = Y + offset_nm_Y
+                    actual_Z = Z + offset_nm_Z
+                    
+                    best_result = {
+                        'stage_Y': int(round(actual_Y)),
+                        'stage_Z': int(round(actual_Z)),
+                        'pixel_pos': result['position'],
+                        'pixel_offset': (offset_px_x, offset_px_y),
+                        'stage_offset_nm': (offset_nm_Y, offset_nm_Z),
+                        'confidence': result['confidence'],
+                        'method': result['method'],
+                        'image': img.copy()
+                    }
+        
+        # ========================================
+        # Print summary and move to corrected position
+        # ========================================
+        if best_result:
+            print(f"   ✅ {label} found!")
+            print(f"      Confidence: {best_result['confidence']:.3f}")
+            print(f"      Grid position: Y={Y:.0f}, Z={Z:.0f} nm")
+            print(f"      Pixel position: {best_result['pixel_pos']}")
+            print(f"      Image center: ({img.shape[1]//2}, {img.shape[0]//2})")
+            print(f"      Pixel offset: {best_result['pixel_offset']}")
+            print(f"      Stage offset (nm): {best_result['stage_offset_nm']}")
+            print(f"      Final stage position: Y={best_result['stage_Y']}, Z={best_result['stage_Z']} nm")
+            
+            # Move stage to the corrected position where fiducial is centered
+            print(f"      📍 Moving stage to corrected position...")
+            self.stage.move_abs('y', best_result['stage_Y'])
+            self.stage.move_abs('z', best_result['stage_Z'])
+            
+            # Take verification image at corrected position
+            verification_img = self.camera.acquire_single_image()
+            best_result['verification_image'] = verification_img
+            
+            # Verify centering
+            img_center = (verification_img.shape[1] // 2, verification_img.shape[0] // 2)
+            verify_result = self.vt.find_fiducial_auto(verification_img, 
+                                                        expected_position=img_center, 
+                                                        search_radius=150)
+            if verify_result:
+                verify_px = verify_result['position']
+                verify_offset_px = (verify_px[0] - img_center[0], verify_px[1] - img_center[1])
+                verify_offset_nm = (verify_offset_px[0] * self.camera.nm_per_pixel,
+                                verify_offset_px[1] * self.camera.nm_per_pixel)
+                print(f"      ✓ Verification: offset = {verify_offset_px} px = ({verify_offset_nm[0]:.0f}, {verify_offset_nm[1]:.0f}) nm")
+                best_result['verification_offset_px'] = verify_offset_px
+                best_result['verification_offset_nm'] = verify_offset_nm
+            else:
+                print(f"      ⚠️  Warning: Could not detect fiducial in verification image!")
+        else:
+            print(f"   ❌ {label} not found in search region")
+        # ========================================
+        # Return verification-based dictionary
+        # ========================================
+        if best_result and 'verification_image' in best_result:
+            verification_output = {
+                'stage_Y': best_result['stage_Y'],
+                'stage_Z': best_result['stage_Z'],
+                'pixel_pos': verify_result['position'] if verify_result else None,
+                'pixel_offset': verify_offset_px if verify_result else None,
+                'stage_offset_nm': verify_offset_nm if verify_result else None,
+                'confidence': verify_result['confidence'] if verify_result else None,
+                'method': verify_result['method'] if verify_result else None,
+                'image': best_result['verification_image'].copy(),
+            }
+
+        if plot_progress:
+            self.plot_search_progress(search_data=search_data, label=label,
+                                      best_result=best_result, best_confidence=best_confidence)
+        
+        if verification_output:    
+            return verification_output
+        else:
+            print("   ⚠️  No verification image available, returning None.")
+            return None
+
+
+
+    def plot_search_progress(self, search_data=None, label=None, best_result=None, best_confidence=-1.0):
+        # ========================================
+        # VISUALIZATION: Create grid of all search images
+        # ========================================
+        print(f"\n   📊 Creating search visualization with {len(search_data)} images...")
+        
+        # Calculate grid dimensions
+        n_images = len(search_data)
+        n_cols = min(8, int(np.ceil(np.sqrt(n_images))))
+        n_rows = int(np.ceil(n_images / n_cols))
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 2.5, n_rows * 2.5))
+        if n_rows == 1 and n_cols == 1:
+            axes = np.array([[axes]])
+        elif n_rows == 1 or n_cols == 1:
+            axes = axes.reshape(n_rows, n_cols)
+        
+        fig.suptitle(f'Grid Search: {label} ({n_images} positions)', fontsize=14, fontweight='bold')
+        
+        for idx, data in enumerate(search_data):
+            row = idx // n_cols
+            col = idx % n_cols
+            ax = axes[row, col]
+            
+            img = data['image']
+            detection = data['detection']
+            img_center = data['img_center']
+            Y_stage = data['Y']
+            Z_stage = data['Z']
+            
+            # Normalize image to 8-bit for better visualization
+            img_norm = np.clip(img.astype(np.float32) / 4095.0 * 255, 0, 255).astype(np.uint8)
+            
+            # Zoom to center region
+            zoom_size = 200
+            cy, cx = img_center[1], img_center[0]
+            y1, y2 = max(0, cy - zoom_size), min(img.shape[0], cy + zoom_size)
+            x1, x2 = max(0, cx - zoom_size), min(img.shape[1], cx + zoom_size)
+            zoomed = img_norm[y1:y2, x1:x2]
+            
+            # Convert to RGB for colored markers
+            zoomed_rgb = cv2.cvtColor(zoomed, cv2.COLOR_GRAY2RGB)
+            
+            # Calculate relative center in zoomed image
+            rel_cx = cx - x1
+            rel_cy = cy - y1
+            
+            if detection:
+                # Mark detected position
+                found_px, found_py = detection['position']
+                rel_fx = found_px - x1
+                rel_fy = found_py - y1
+                
+                # Draw markers (using cv2 to draw on array)
+                cv2.drawMarker(zoomed_rgb, (int(rel_cx), int(rel_cy)), 
+                            (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
+                cv2.drawMarker(zoomed_rgb, (int(rel_fx), int(rel_fy)), 
+                            (255, 0, 0), cv2.MARKER_TILTED_CROSS, 25, 2)
+                
+                confidence = detection.get('confidence', 0.0)
+                method = detection.get('method', 'unknown')[:8]  # truncate
+                
+                # Color based on confidence
+                if confidence > 0.7:
+                    border_color = 'green'
+                    title_color = 'darkgreen'
+                elif confidence > 0.4:
+                    border_color = 'orange'
+                    title_color = 'darkorange'
+                else:
+                    border_color = 'yellow'
+                    title_color = 'goldenrod'
+                
+                ax.imshow(zoomed_rgb, origin='lower')
+                ax.set_title(f'✓ {method}\n{confidence:.2f}', 
+                            fontsize=8, color=title_color, fontweight='bold')
+                
+                # Highlight border if this is the best result
+                if best_result and detection['confidence'] == best_confidence:
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor('lime')
+                        spine.set_linewidth(4)
+            else:
+                # No detection - mark center only
+                cv2.drawMarker(zoomed_rgb, (int(rel_cx), int(rel_cy)), 
+                            (128, 128, 128), cv2.MARKER_CROSS, 15, 1)
+                ax.imshow(zoomed_rgb, origin='lower')
+                ax.set_title('✗ not found', fontsize=8, color='gray')
+            
+            # Add axis labels with stage positions
+            ax.set_xlabel(f'Y={Y_stage/1000:.1f}µm', fontsize=7)
+            ax.set_ylabel(f'Z={Z_stage/1000:.1f}µm', fontsize=7)
+            
+            # Keep tick labels visible but make them smaller
+            ax.tick_params(labelsize=6)
+        
+        # Hide unused subplots
+        for idx in range(n_images, n_rows * n_cols):
+            row = idx // n_cols
+            col = idx % n_cols
+            axes[row, col].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save with descriptive filename
+        safe_label = label.replace(' ', '_').replace('/', '_')
+        filename = f'search_grid_{safe_label}.png'
+        plt.savefig(filename, dpi=120, bbox_inches='tight')
+        print(f"   💾 Saved search visualization: {filename}")
+        plt.show()
 
 # =============================================================================
 # TEST A: CV DETECTION ON MOCK IMAGES
@@ -276,8 +537,7 @@ def test_b_blind_calibration():
     print(f"📍 Block 1 TL global design position: ({block1_tl_global_u}, {block1_tl_global_v}) µm")
 
     # Search region around origin (design assumed near origin)
-    search_result_1 = search_for_fiducial(
-        tester,
+    search_result_1 = tester.search_for_fiducial(
         center_y_nm=block1_tl_global_u * 1000.0,
         center_z_nm=block1_tl_global_v * 1000.0,
         search_radius_nm=10000,
@@ -323,8 +583,7 @@ def test_b_blind_calibration():
     print(f"   Expected stage position (from measured translation): ({expected_y:.0f}, {expected_z:.0f}) nm")
     print(f"\n🔍 Searching around expected position...")
 
-    search_result_2 = search_for_fiducial(
-        tester,
+    search_result_2 = tester.search_for_fiducial(
         center_y_nm=expected_y,
         center_z_nm=expected_z,
         search_radius_nm=100000,
@@ -506,264 +765,6 @@ STATUS: {status}
         if not translation_ok:
             print(f"   Translation error {translation_error:.1f} nm > 1000 nm threshold")
         return False, tester
-
-
-def search_for_fiducial(tester, center_y_nm, center_z_nm, search_radius_nm=50000,
-                       step_nm=10000, label="Fiducial"):
-    """
-    Search for fiducial marker in a region using grid search.
-    NOW WITH VISUALIZATION of all captured images!
-
-    Returns:
-        dict with 'stage_Y', 'stage_Z', 'pixel_pos', 'confidence', 'image', 'method' or None if not found
-    """
-    print(f"   Searching in {search_radius_nm / 1000:.0f} µm radius with {step_nm / 1000:.0f} µm steps...")
-
-    y_positions = np.arange(center_y_nm - search_radius_nm,
-                            center_y_nm + search_radius_nm + 0.5 * step_nm,
-                            step_nm)
-    z_positions = np.arange(center_z_nm - search_radius_nm,
-                            center_z_nm + search_radius_nm + 0.5 * step_nm,
-                            step_nm)
-
-    best_result = None
-    best_confidence = -1.0
-    total_positions = len(y_positions) * len(z_positions)
-    
-    # Store all images and detection results for visualization
-    search_data = []
-    
-    checked = 0
-
-    for Y in y_positions:
-        for Z in z_positions:
-            checked += 1
-            if checked % 10 == 0:
-                print(f"   Progress: {checked}/{total_positions} positions checked...", end='\r')
-
-            # Move stage
-            tester.stage.move_abs('y', int(round(Y)))
-            tester.stage.move_abs('z', int(round(Z)))
-
-            # Capture image
-            img = tester.camera.acquire_single_image()
-
-            # Look for fiducial near center
-            img_center_x = img.shape[1] // 2
-            img_center_y = img.shape[0] // 2
-            img_center = (img_center_x, img_center_y)
-            
-            result = tester.vt.find_fiducial_auto(img, expected_position=img_center, search_radius=150)
-
-            # Store data for visualization
-            search_data.append({
-                'Y': Y,
-                'Z': Z,
-                'image': img.copy(),
-                'detection': result,
-                'img_center': img_center
-            })
-
-            if result and result.get('confidence', 0.0) > best_confidence:
-                best_confidence = result['confidence']
-                
-                # Calculate actual stage position from pixel offset
-                found_px, found_py = result['position']
-                
-                # Pixel offset from center
-                offset_px_x = found_px - img_center_x
-                offset_px_y = found_py - img_center_y
-                
-                # Convert to nm
-                offset_nm_Y = offset_px_x * tester.camera.nm_per_pixel
-                offset_nm_Z = offset_px_y * tester.camera.nm_per_pixel
-                
-                # Actual stage position = grid position + pixel offset
-                actual_Y = Y + offset_nm_Y
-                actual_Z = Z + offset_nm_Z
-                
-                best_result = {
-                    'stage_Y': int(round(actual_Y)),
-                    'stage_Z': int(round(actual_Z)),
-                    'pixel_pos': result['position'],
-                    'pixel_offset': (offset_px_x, offset_px_y),
-                    'stage_offset_nm': (offset_nm_Y, offset_nm_Z),
-                    'confidence': result['confidence'],
-                    'method': result['method'],
-                    'image': img.copy()
-                }
-
-    print()  # newline after progress
-    
-    # ========================================
-    # VISUALIZATION: Create grid of all search images
-    # ========================================
-    print(f"\n   📊 Creating search visualization with {len(search_data)} images...")
-    
-    # Calculate grid dimensions
-    n_images = len(search_data)
-    n_cols = min(8, int(np.ceil(np.sqrt(n_images))))
-    n_rows = int(np.ceil(n_images / n_cols))
-    
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 2.5, n_rows * 2.5))
-    if n_rows == 1 and n_cols == 1:
-        axes = np.array([[axes]])
-    elif n_rows == 1 or n_cols == 1:
-        axes = axes.reshape(n_rows, n_cols)
-    
-    fig.suptitle(f'Grid Search: {label} ({n_images} positions)', fontsize=14, fontweight='bold')
-    
-    for idx, data in enumerate(search_data):
-        row = idx // n_cols
-        col = idx % n_cols
-        ax = axes[row, col]
-        
-        img = data['image']
-        detection = data['detection']
-        img_center = data['img_center']
-        Y_stage = data['Y']
-        Z_stage = data['Z']
-        
-        # Normalize image to 8-bit for better visualization
-        img_norm = np.clip(img.astype(np.float32) / 4095.0 * 255, 0, 255).astype(np.uint8)
-        
-        # Zoom to center region
-        zoom_size = 200
-        cy, cx = img_center[1], img_center[0]
-        y1, y2 = max(0, cy - zoom_size), min(img.shape[0], cy + zoom_size)
-        x1, x2 = max(0, cx - zoom_size), min(img.shape[1], cx + zoom_size)
-        zoomed = img_norm[y1:y2, x1:x2]
-        
-        # Convert to RGB for colored markers
-        zoomed_rgb = cv2.cvtColor(zoomed, cv2.COLOR_GRAY2RGB)
-        
-        # Calculate relative center in zoomed image
-        rel_cx = cx - x1
-        rel_cy = cy - y1
-        
-        if detection:
-            # Mark detected position
-            found_px, found_py = detection['position']
-            rel_fx = found_px - x1
-            rel_fy = found_py - y1
-            
-            # Draw markers (using cv2 to draw on array)
-            cv2.drawMarker(zoomed_rgb, (int(rel_cx), int(rel_cy)), 
-                          (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
-            cv2.drawMarker(zoomed_rgb, (int(rel_fx), int(rel_fy)), 
-                          (255, 0, 0), cv2.MARKER_TILTED_CROSS, 25, 2)
-            
-            confidence = detection.get('confidence', 0.0)
-            method = detection.get('method', 'unknown')[:8]  # truncate
-            
-            # Color based on confidence
-            if confidence > 0.7:
-                border_color = 'green'
-                title_color = 'darkgreen'
-            elif confidence > 0.4:
-                border_color = 'orange'
-                title_color = 'darkorange'
-            else:
-                border_color = 'yellow'
-                title_color = 'goldenrod'
-            
-            ax.imshow(zoomed_rgb, origin='lower')
-            ax.set_title(f'✓ {method}\n{confidence:.2f}', 
-                        fontsize=8, color=title_color, fontweight='bold')
-            
-            # Highlight border if this is the best result
-            if best_result and detection['confidence'] == best_confidence:
-                for spine in ax.spines.values():
-                    spine.set_edgecolor('lime')
-                    spine.set_linewidth(4)
-        else:
-            # No detection - mark center only
-            cv2.drawMarker(zoomed_rgb, (int(rel_cx), int(rel_cy)), 
-                          (128, 128, 128), cv2.MARKER_CROSS, 15, 1)
-            ax.imshow(zoomed_rgb, origin='lower')
-            ax.set_title('✗ not found', fontsize=8, color='gray')
-        
-        # Add axis labels with stage positions
-        ax.set_xlabel(f'Y={Y_stage/1000:.1f}µm', fontsize=7)
-        ax.set_ylabel(f'Z={Z_stage/1000:.1f}µm', fontsize=7)
-        
-        # Keep tick labels visible but make them smaller
-        ax.tick_params(labelsize=6)
-    
-    # Hide unused subplots
-    for idx in range(n_images, n_rows * n_cols):
-        row = idx // n_cols
-        col = idx % n_cols
-        axes[row, col].axis('off')
-    
-    plt.tight_layout()
-    
-    # Save with descriptive filename
-    safe_label = label.replace(' ', '_').replace('/', '_')
-    filename = f'search_grid_{safe_label}.png'
-    plt.savefig(filename, dpi=120, bbox_inches='tight')
-    print(f"   💾 Saved search visualization: {filename}")
-    plt.show()
-    
-    # ========================================
-    # Print summary and move to corrected position
-    # ========================================
-    if best_result:
-        print(f"   ✅ {label} found!")
-        print(f"      Confidence: {best_result['confidence']:.3f}")
-        print(f"      Grid position: Y={Y:.0f}, Z={Z:.0f} nm")
-        print(f"      Pixel position: {best_result['pixel_pos']}")
-        print(f"      Image center: ({img.shape[1]//2}, {img.shape[0]//2})")
-        print(f"      Pixel offset: {best_result['pixel_offset']}")
-        print(f"      Stage offset (nm): {best_result['stage_offset_nm']}")
-        print(f"      Final stage position: Y={best_result['stage_Y']}, Z={best_result['stage_Z']} nm")
-        
-        # Move stage to the corrected position where fiducial is centered
-        print(f"      📍 Moving stage to corrected position...")
-        tester.stage.move_abs('y', best_result['stage_Y'])
-        tester.stage.move_abs('z', best_result['stage_Z'])
-        
-        # Take verification image at corrected position
-        verification_img = tester.camera.acquire_single_image()
-        best_result['verification_image'] = verification_img
-        
-        # Verify centering
-        img_center = (verification_img.shape[1] // 2, verification_img.shape[0] // 2)
-        verify_result = tester.vt.find_fiducial_auto(verification_img, 
-                                                     expected_position=img_center, 
-                                                     search_radius=150)
-        if verify_result:
-            verify_px = verify_result['position']
-            verify_offset_px = (verify_px[0] - img_center[0], verify_px[1] - img_center[1])
-            verify_offset_nm = (verify_offset_px[0] * tester.camera.nm_per_pixel,
-                               verify_offset_px[1] * tester.camera.nm_per_pixel)
-            print(f"      ✓ Verification: offset = {verify_offset_px} px = ({verify_offset_nm[0]:.0f}, {verify_offset_nm[1]:.0f}) nm")
-            best_result['verification_offset_px'] = verify_offset_px
-            best_result['verification_offset_nm'] = verify_offset_nm
-        else:
-            print(f"      ⚠️  Warning: Could not detect fiducial in verification image!")
-    else:
-        print(f"   ❌ {label} not found in search region")
-    # ========================================
-    # Return verification-based dictionary
-    # ========================================
-    if best_result and 'verification_image' in best_result:
-        verification_output = {
-            'stage_Y': best_result['stage_Y'],
-            'stage_Z': best_result['stage_Z'],
-            'pixel_pos': verify_result['position'] if verify_result else None,
-            'pixel_offset': verify_offset_px if verify_result else None,
-            'stage_offset_nm': verify_offset_nm if verify_result else None,
-            'confidence': verify_result['confidence'] if verify_result else None,
-            'method': verify_result['method'] if verify_result else None,
-            'image': best_result['verification_image'].copy(),
-        }
-        return verification_output
-    else:
-        print("   ⚠️  No verification image available, returning None.")
-        return None
-
-
 
 # =============================================================================
 # MAIN EXECUTION ENTRY POINT

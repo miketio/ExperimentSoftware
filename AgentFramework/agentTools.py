@@ -4,7 +4,7 @@ Tool functions that the AI agent can call to control the experiment.
 These wrap the REST API client with additional safety checks and formatting.
 """
 from typing import Optional, Dict, Any
-from Testing.test_api_client import ExperimentAPIClient
+from RESTAPI.test_api_client import ExperimentAPIClient
 from AgentFramework.agentConfig import MAX_SAFE_MOVE, MAX_SAFE_AUTOFOCUS_RANGE, VALID_AXES
 
 

@@ -10,8 +10,8 @@ from pathlib import Path
 import cv2
 
 # Import mock components
-from Testing.mockStage_v2 import MockXYZStage
-from Testing.mock_camera import MockCamera
+from HardwareControl.SetupMotor.mockStage_v2 import MockXYZStage
+from HardwareControl.CameraControl.mock_camera import MockCamera
 from config.layout_config_generator_v2 import generate_layout_config_v2, load_layout_config_v2
 from AlignmentSystem.coordinate_utils import CoordinateConverter
 
