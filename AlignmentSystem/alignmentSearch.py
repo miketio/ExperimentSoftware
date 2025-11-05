@@ -503,7 +503,7 @@ class AlignmentSearcher:
 
 
 if __name__ == "__main__":
-    from HardwareControl.CameraControl.mock_camera import MockCamera
+    from HardwareControl.CameraControl.mock_camera_v3 import MockCamera
     from HardwareControl.SetupMotor.mockStage_v2 import MockXYZStage
     from HardwareControl.SetupMotor.stageAdapter import StageAdapterUM
     from AlignmentSystem.cv_tools import VisionTools

@@ -105,7 +105,7 @@ class CoordinateTransformValidator:
                 print(f"⚠️  Point {i}: Error = {error_magnitude:.6f} µm (exceeds tolerance)")
                 print(f"   Original:  ({u_orig:.3f}, {v_orig:.3f}) µm")
                 print(f"   Recovered: ({u_back:.6f}, {v_back:.6f}) µm")
-                print(f"   Stage:     ({Y_stage:.1f}, {Z_stage:.1f}) nm")
+                print(f"   Stage:     ({Y_stage:.1f}, {Z_stage:.1f}) µm")
         
         # Statistics
         if errors:
@@ -247,7 +247,13 @@ class CoordinateTransformValidator:
     
     def plot_validation_results(self, result: Dict, save_path: Optional[str] = None):
         """
-        Create comprehensive visualization of validation results.
+        Create streamlined visualization of validation results.
+        
+        Focus on:
+        1. Original vs Recovered overlay (visual sanity check)
+        2. Error vector field (systematic bias detection)
+        3. Error histogram (distribution with tolerance)
+        4. Statistics summary (pass/fail verdict)
         
         Args:
             result: Dict from validate_round_trip or validate_grid
@@ -257,8 +263,8 @@ class CoordinateTransformValidator:
             print("⚠️  No results to plot")
             return
         
-        fig = plt.figure(figsize=(18, 12))
-        gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.35)
+        fig = plt.figure(figsize=(16, 10))
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
         
         errors = result['errors']
         error_magnitudes = np.array([e['error_magnitude'] for e in errors])
@@ -266,198 +272,134 @@ class CoordinateTransformValidator:
         recovered_points = np.array([e['recovered'] for e in errors])
         
         # =====================================================================
-        # Plot 1: Error Magnitude Heatmap (if grid)
+        # Plot 1: Original vs Recovered Overlay (TOP LEFT)
         # =====================================================================
         ax1 = fig.add_subplot(gs[0, 0])
         
-        if 'grid_shape' in result:
-            grid_h, grid_w = result['grid_shape']
-            error_grid = error_magnitudes.reshape(grid_h, grid_w)
-            
-            im1 = ax1.imshow(error_grid, cmap='hot', origin='lower', 
-                            extent=[result['u_range'][0], result['u_range'][1],
-                                   result['v_range'][0], result['v_range'][1]],
-                            aspect='auto')
-            ax1.set_title('Round-Trip Error Magnitude (µm)', fontweight='bold')
-            ax1.set_xlabel('U (µm)')
-            ax1.set_ylabel('V (µm)')
-            plt.colorbar(im1, ax=ax1, label='Error (µm)')
-        else:
-            # Scatter plot if not grid
-            scatter = ax1.scatter(original_points[:, 0], original_points[:, 1],
-                                 c=error_magnitudes, cmap='hot', s=50, alpha=0.7)
-            ax1.set_title('Round-Trip Error by Position', fontweight='bold')
-            ax1.set_xlabel('U (µm)')
-            ax1.set_ylabel('V (µm)')
-            ax1.set_aspect('equal')
-            plt.colorbar(scatter, ax=ax1, label='Error (µm)')
+        ax1.scatter(original_points[:, 0], original_points[:, 1], 
+                   c='blue', marker='o', s=40, alpha=0.6, label='Original', zorder=2)
+        ax1.scatter(recovered_points[:, 0], recovered_points[:, 1],
+                   c='red', marker='x', s=40, alpha=0.6, label='Recovered', zorder=3)
+        
+        # Draw error vectors for worst 15 cases
+        worst_indices = np.argsort(error_magnitudes)[-15:]
+        for idx in worst_indices:
+            ax1.plot([original_points[idx, 0], recovered_points[idx, 0]],
+                    [original_points[idx, 1], recovered_points[idx, 1]],
+                    'orange', linewidth=1.5, alpha=0.7, zorder=1)
+        
+        ax1.set_xlabel('u (µm)', fontsize=11)
+        ax1.set_ylabel('v (µm)', fontsize=11)
+        ax1.set_title('Original vs Recovered Positions', fontweight='bold', fontsize=12)
+        ax1.legend(fontsize=10)
+        ax1.set_aspect('equal')
+        ax1.grid(True, alpha=0.3)
         
         # =====================================================================
-        # Plot 2: Error Histogram
+        # Plot 2: Error Vector Field (TOP RIGHT)
         # =====================================================================
         ax2 = fig.add_subplot(gs[0, 1])
         
-        ax2.hist(error_magnitudes * 1000, bins=50, edgecolor='black', alpha=0.7)
-        ax2.axvline(result['mean_error'] * 1000, color='red', linestyle='--', 
-                   linewidth=2, label=f"Mean: {result['mean_error']*1000:.3f} nm")
-        ax2.axvline(result['max_error'] * 1000, color='orange', linestyle='--',
-                   linewidth=2, label=f"Max: {result['max_error']*1000:.3f} nm")
-        if result.get('tolerance'):
-            ax2.axvline(result['tolerance'] * 1000, color='green', linestyle=':',
-                       linewidth=2, label=f"Tolerance: {result['tolerance']*1000:.3f} nm")
+        # Sample subset for clarity if too many points
+        step = max(1, len(errors) // 100)
+        sample_orig = original_points[::step]
+        sample_recov = recovered_points[::step]
+        sample_errors = error_magnitudes[::step]
         
-        ax2.set_xlabel('Error (nm)')
-        ax2.set_ylabel('Frequency')
-        ax2.set_title('Error Distribution', fontweight='bold')
-        ax2.legend()
+        # Error vectors in µm (magnified for visibility)
+        du = (sample_recov[:, 0] - sample_orig[:, 0])
+        dv = (sample_recov[:, 1] - sample_orig[:, 1])
+        
+        # Adaptive magnification based on typical error size
+        typical_error = np.median(error_magnitudes)
+        if typical_error > 0:
+            magnification = 1000  # Make 1 µm error visible
+        else:
+            magnification = 1e6
+        
+        du_mag = du * magnification
+        dv_mag = dv * magnification
+        
+        q = ax2.quiver(sample_orig[:, 0], sample_orig[:, 1], du_mag, dv_mag,
+                      sample_errors, cmap='hot', alpha=0.7,
+                      scale=1, scale_units='xy', angles='xy', width=0.003)
+        
+        ax2.set_xlabel('u (µm)', fontsize=11)
+        ax2.set_ylabel('v (µm)', fontsize=11)
+        ax2.set_title(f'Error Vectors (Magnified {magnification:.0e}×)', 
+                     fontweight='bold', fontsize=12)
+        ax2.set_aspect('equal')
         ax2.grid(True, alpha=0.3)
         
+        cbar = plt.colorbar(q, ax=ax2, label='Error (µm)')
+        cbar.ax.tick_params(labelsize=9)
+        
         # =====================================================================
-        # Plot 3: Error Statistics Box
+        # Plot 3: Error Histogram (BOTTOM LEFT)
         # =====================================================================
-        ax3 = fig.add_subplot(gs[0, 2])
-        ax3.axis('off')
+        ax3 = fig.add_subplot(gs[1, 0])
+        
+        ax3.hist(error_magnitudes, bins=50, edgecolor='black', alpha=0.7, color='steelblue')
+        ax3.axvline(result['mean_error'], color='red', linestyle='--', 
+                   linewidth=2, label=f"Mean: {result['mean_error']:.6f} µm")
+        ax3.axvline(result['max_error'], color='orange', linestyle='--',
+                   linewidth=2, label=f"Max: {result['max_error']:.6f} µm")
+        if result.get('tolerance'):
+            ax3.axvline(result['tolerance'], color='green', linestyle=':',
+                       linewidth=2.5, label=f"Tolerance: {result['tolerance']:.6f} µm")
+        
+        ax3.set_xlabel('Error (µm)', fontsize=11)
+        ax3.set_ylabel('Frequency', fontsize=11)
+        ax3.set_title('Error Distribution', fontweight='bold', fontsize=12)
+        ax3.legend(fontsize=9)
+        ax3.grid(True, alpha=0.3, axis='y')
+        
+        # =====================================================================
+        # Plot 4: Statistics Summary (BOTTOM RIGHT)
+        # =====================================================================
+        ax4 = fig.add_subplot(gs[1, 1])
+        ax4.axis('off')
+        
+        # Calculate percentiles
+        p50 = np.percentile(error_magnitudes, 50)
+        p95 = np.percentile(error_magnitudes, 95)
+        p99 = np.percentile(error_magnitudes, 99)
         
         stats_text = f"""
 ROUND-TRIP VALIDATION SUMMARY
-{'='*35}
+{'='*42}
 
 Points Tested:     {len(errors)}
 Failed Points:     {len(result.get('failed_points', []))}
 
 ERROR STATISTICS (µm):
-  Mean:      {result['mean_error']:.9f}
-  Median:    {result.get('median_error', 0):.9f}
-  Std Dev:   {result.get('std_error', 0):.9f}
-  Max:       {result['max_error']:.9f}
+  Mean:           {result['mean_error']:.9f}
+  Median:         {result.get('median_error', 0):.9f}
+  Std Dev:        {result.get('std_error', 0):.9f}
+  Max:            {result['max_error']:.9f}
   
+  50th percentile: {p50:.9f}
+  95th percentile: {p95:.9f}
+  99th percentile: {p99:.9f}
+
 ERROR STATISTICS (nm):
-  Mean:      {result['mean_error']*1000:.6f}
-  Median:    {result.get('median_error', 0)*1000:.6f}
-  Max:       {result['max_error']*1000:.6f}
+  Mean:           {result['mean_error']*1000:.6f}
+  Max:            {result['max_error']*1000:.6f}
 
-TOLERANCE:         {result.get('tolerance', 0):.9f} µm
-                   ({result.get('tolerance', 0)*1000:.6f} nm)
+TOLERANCE:        {result.get('tolerance', 0):.9f} µm
+                  ({result.get('tolerance', 0)*1000:.6f} nm)
 
+{'='*42}
 STATUS: {'✅ PASSED' if result['passed'] else '❌ FAILED'}
+{'='*42}
 """
         
-        ax3.text(0.05, 0.95, stats_text, transform=ax3.transAxes,
+        box_color = 'lightgreen' if result['passed'] else 'lightsalmon'
+        
+        ax4.text(0.05, 0.95, stats_text, transform=ax4.transAxes,
                 fontsize=9, family='monospace', verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-        
-        # =====================================================================
-        # Plot 4: U-component errors
-        # =====================================================================
-        ax4 = fig.add_subplot(gs[1, 0])
-        
-        error_u = np.array([e['error_u'] for e in errors]) * 1000  # to nm
-        ax4.scatter(original_points[:, 0], error_u, alpha=0.5, s=20)
-        ax4.axhline(0, color='black', linestyle='-', linewidth=0.5)
-        ax4.axhline(np.mean(error_u), color='red', linestyle='--', 
-                   label=f'Mean: {np.mean(error_u):.3f} nm')
-        ax4.set_xlabel('U (µm)')
-        ax4.set_ylabel('U Error (nm)')
-        ax4.set_title('U-Component Error vs Position', fontweight='bold')
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-        
-        # =====================================================================
-        # Plot 5: V-component errors
-        # =====================================================================
-        ax5 = fig.add_subplot(gs[1, 1])
-        
-        error_v = np.array([e['error_v'] for e in errors]) * 1000  # to nm
-        ax5.scatter(original_points[:, 1], error_v, alpha=0.5, s=20)
-        ax5.axhline(0, color='black', linestyle='-', linewidth=0.5)
-        ax5.axhline(np.mean(error_v), color='red', linestyle='--',
-                   label=f'Mean: {np.mean(error_v):.3f} nm')
-        ax5.set_xlabel('V (µm)')
-        ax5.set_ylabel('V Error (nm)')
-        ax5.set_title('V-Component Error vs Position', fontweight='bold')
-        ax5.legend()
-        ax5.grid(True, alpha=0.3)
-        
-        # =====================================================================
-        # Plot 6: Vector field of errors (magnified)
-        # =====================================================================
-        ax6 = fig.add_subplot(gs[1, 2])
-        
-        # Sample subset for clarity
-        step = max(1, len(errors) // 100)
-        sample_orig = original_points[::step]
-        sample_recov = recovered_points[::step]
-        
-        # Error vectors (magnified for visibility)
-        magnification = 1e6  # 1 µm error = 1000000 display units
-        du = (sample_recov[:, 0] - sample_orig[:, 0]) * magnification
-        dv = (sample_recov[:, 1] - sample_orig[:, 1]) * magnification
-        
-        ax6.quiver(sample_orig[:, 0], sample_orig[:, 1], du, dv,
-                  error_magnitudes[::step], cmap='hot', alpha=0.6,
-                  scale=1, scale_units='xy', angles='xy', width=0.003)
-        ax6.set_xlabel('U (µm)')
-        ax6.set_ylabel('V (µm)')
-        ax6.set_title('Error Vectors (Magnified 1e6×)', fontweight='bold')
-        ax6.set_aspect('equal')
-        ax6.grid(True, alpha=0.3)
-        
-        # =====================================================================
-        # Plot 7: Error vs Distance from Origin
-        # =====================================================================
-        ax7 = fig.add_subplot(gs[2, 0])
-        
-        distances = np.hypot(original_points[:, 0], original_points[:, 1])
-        ax7.scatter(distances, error_magnitudes * 1000, alpha=0.5, s=20)
-        ax7.set_xlabel('Distance from Origin (µm)')
-        ax7.set_ylabel('Error (nm)')
-        ax7.set_title('Error vs Distance from Origin', fontweight='bold')
-        ax7.grid(True, alpha=0.3)
-        
-        # =====================================================================
-        # Plot 8: Original vs Recovered (overlay)
-        # =====================================================================
-        ax8 = fig.add_subplot(gs[2, 1])
-        
-        ax8.scatter(original_points[:, 0], original_points[:, 1], 
-                   c='blue', marker='o', s=30, alpha=0.5, label='Original')
-        ax8.scatter(recovered_points[:, 0], recovered_points[:, 1],
-                   c='red', marker='x', s=30, alpha=0.5, label='Recovered')
-        
-        # Draw error vectors for worst cases
-        worst_indices = np.argsort(error_magnitudes)[-10:]  # 10 worst
-        for idx in worst_indices:
-            ax8.plot([original_points[idx, 0], recovered_points[idx, 0]],
-                    [original_points[idx, 1], recovered_points[idx, 1]],
-                    'orange', linewidth=1, alpha=0.5)
-        
-        ax8.set_xlabel('U (µm)')
-        ax8.set_ylabel('V (µm)')
-        ax8.set_title('Original vs Recovered Positions', fontweight='bold')
-        ax8.legend()
-        ax8.set_aspect('equal')
-        ax8.grid(True, alpha=0.3)
-        
-        # =====================================================================
-        # Plot 9: Cumulative Error Distribution
-        # =====================================================================
-        ax9 = fig.add_subplot(gs[2, 2])
-        
-        sorted_errors = np.sort(error_magnitudes) * 1000  # nm
-        percentiles = np.linspace(0, 100, len(sorted_errors))
-        
-        ax9.plot(percentiles, sorted_errors, linewidth=2)
-        ax9.axhline(result['mean_error'] * 1000, color='red', linestyle='--',
-                   label=f"Mean: {result['mean_error']*1000:.3f} nm")
-        ax9.axhline(np.percentile(error_magnitudes * 1000, 95), 
-                   color='orange', linestyle='--',
-                   label=f"95th %ile: {np.percentile(error_magnitudes * 1000, 95):.3f} nm")
-        
-        ax9.set_xlabel('Percentile')
-        ax9.set_ylabel('Error (nm)')
-        ax9.set_title('Cumulative Error Distribution', fontweight='bold')
-        ax9.legend()
-        ax9.grid(True, alpha=0.3)
+                bbox=dict(boxstyle='round', facecolor=box_color, alpha=0.8, 
+                         edgecolor='black', linewidth=1.5))
         
         # =====================================================================
         # Overall title
@@ -509,7 +451,7 @@ def run_comprehensive_validation():
     
     print(f"✅ Transform initialized")
     print(f"   Rotation: {gt['rotation_deg']}°")
-    print(f"   Translation: {gt['translation_um']} um")
+    print(f"   Translation: {gt['translation_um']} µm")
     
     # Create validator
     validator = CoordinateTransformValidator(transform, layout)
