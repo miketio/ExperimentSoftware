@@ -1,11 +1,10 @@
 {
   "design_name": "ArrayD_QuasiPeriodic_20Blocks",
-  "version": "2.0",
+  "version": "2.1",
   "coordinate_system": {
-    "description": "Block positions in unrotated design coordinates (\u00b5m). Contents in local block coordinates (\u00b5m).",
+    "description": "All coordinates in micrometers (\u00b5m). Stage hardware uses nm internally.",
     "origin": "Bottom-left corner of Block 1 at stage (0, 0)",
-    "units_blocks": "micrometers",
-    "units_stage": "nanometers"
+    "units": "micrometers"
   },
   "block_layout": {
     "block_size": 200.0,
@@ -17,9 +16,9 @@
   "simulation_ground_truth": {
     "description": "True rotation/translation for testing (mock mode only)",
     "rotation_deg": 3.0,
-    "translation_nm": [
-      10000,
-      0
+    "translation_um": [
+      0.0,
+      0.0
     ],
     "note": "Real system must determine these by finding fiducial markers"
   },
@@ -47,6 +46,13 @@
         0.0,
         0.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 4.967141530112327,
+        "translation_um": [
+          -0.13826430117118466,
+          0.6476885381006925
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -436,6 +442,13 @@
         300.0,
         0.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 15.230298564080254,
+        "translation_um": [
+          -0.23415337472333597,
+          -0.23413695694918055
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -825,6 +838,13 @@
         600.0,
         0.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 15.792128155073915,
+        "translation_um": [
+          0.7674347291529088,
+          -0.4694743859349521
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -1214,6 +1234,13 @@
         900.0,
         0.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 5.425600435859646,
+        "translation_um": [
+          -0.46341769281246226,
+          -0.46572975357025687
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -1603,6 +1630,13 @@
         1200.0,
         0.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 2.419622715660341,
+        "translation_um": [
+          -1.913280244657798,
+          -1.7249178325130328
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -1992,6 +2026,13 @@
         0.0,
         -300.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -5.622875292409727,
+        "translation_um": [
+          -1.0128311203344238,
+          0.3142473325952739
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -2381,6 +2422,13 @@
         300.0,
         -300.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -9.08024075521211,
+        "translation_um": [
+          -1.4123037013352915,
+          1.465648768921554
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -2770,6 +2818,13 @@
         600.0,
         -300.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -2.2577630048653567,
+        "translation_um": [
+          0.06752820468792384,
+          -1.4247481862134568
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -3159,6 +3214,13 @@
         900.0,
         -300.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -5.443827245251827,
+        "translation_um": [
+          0.11092258970986608,
+          -1.1509935774223028
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -3548,6 +3610,13 @@
         1200.0,
         -300.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 3.7569801834567196,
+        "translation_um": [
+          -0.600638689918805,
+          -0.2916937497932768
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -3937,6 +4006,13 @@
         0.0,
         -600.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -6.017066122293969,
+        "translation_um": [
+          1.8522781845089378,
+          -0.013497224737933921
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -4326,6 +4402,13 @@
         300.0,
         -600.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -10.577109289559004,
+        "translation_um": [
+          0.822544912103189,
+          -1.2208436499710222
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -4715,6 +4798,13 @@
         600.0,
         -600.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 2.088635950047554,
+        "translation_um": [
+          -1.9596701238797756,
+          -1.3281860488984305
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -5104,6 +5194,13 @@
         900.0,
         -600.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 1.9686123586912352,
+        "translation_um": [
+          0.7384665799954104,
+          0.1713682811899705
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -5493,6 +5590,13 @@
         1200.0,
         -600.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -1.1564828238824052,
+        "translation_um": [
+          -0.3011036955892888,
+          -1.4785219903674274
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -5882,6 +5986,13 @@
         0.0,
         -900.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -7.198442083947087,
+        "translation_um": [
+          -0.4606387709597875,
+          1.0571222262189157
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -6271,6 +6382,13 @@
         300.0,
         -900.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 3.436182895684614,
+        "translation_um": [
+          -1.763040155362734,
+          0.324083969394795
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -6660,6 +6778,13 @@
         600.0,
         -900.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -3.8508228041631654,
+        "translation_um": [
+          -0.6769220003059587,
+          0.6116762888408679
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -7049,6 +7174,13 @@
         900.0,
         -900.0
       ],
+      "fabrication_error": {
+        "rotation_deg": 10.30999522495951,
+        "translation_um": [
+          0.9312801191161986,
+          -0.8392175232226385
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,
@@ -7438,6 +7570,13 @@
         1200.0,
         -900.0
       ],
+      "fabrication_error": {
+        "rotation_deg": -3.092123758512146,
+        "translation_um": [
+          0.33126343140356396,
+          0.9755451271223592
+        ]
+      },
       "fiducials": {
         "bottom_left": [
           5.0,

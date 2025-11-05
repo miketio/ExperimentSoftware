@@ -37,52 +37,47 @@ class AlignmentSearcher:
         self.camera = camera
         self.vt = vision_tools
     
-    def search_for_fiducial(self, center_y_nm: float, center_z_nm: float, 
-                           search_radius_nm: float = 50000, 
-                           step_nm: float = 10000,
-                           label: str = "Fiducial", 
-                           plot_progress: bool = True) -> Optional[Dict[str, Any]]:
+    def search_for_fiducial(self, center_y_um: float, center_z_um: float, 
+                            search_radius_um: float = 50.0,
+                            step_um: float = 10.0,
+                            label: str = "Fiducial",
+                            plot_progress: bool = True) -> Optional[Dict[str, Any]]:
         """
-        Grid search for fiducial with visualization.
-        
-        Performs coarse grid search, then refines position based on pixel-level detection.
-        After finding best position, moves stage there and captures verification image.
-        
+        Grid search for fiducial with visualization (all units in µm).
+
         Args:
-            center_y_nm: Search center Y position (nm)
-            center_z_nm: Search center Z position (nm)
-            search_radius_nm: Search radius (nm)
-            step_nm: Grid step size (nm)
+            center_y_um: Search center Y position (µm)
+            center_z_um: Search center Z position (µm)
+            search_radius_um: Search radius (µm)
+            step_um: Grid step size (µm)
             label: Label for printing/plotting
             plot_progress: Whether to show grid visualization
-        
+
         Returns:
-            dict with keys:
-                - stage_Y, stage_Z: Final refined stage position (nm)
+            dict with:
+                - stage_Y, stage_Z: Final refined stage position (µm)
                 - pixel_pos: Detected pixel position in verification image
                 - pixel_offset: Pixel offset from center in verification image
-                - stage_offset_nm: Stage offset from center (nm)
+                - stage_offset_um: Stage offset from center (µm)
                 - confidence: Detection confidence
                 - method: Detection method used
                 - image: Verification image (at refined position)
-            or None if not found
+            or None if not found.
         """
-        print(f"   Searching in {search_radius_nm / 1000:.0f} µm radius with {step_nm / 1000:.0f} µm steps...")
+        print(f"   Searching in {search_radius_um:.0f} µm radius with {step_um:.0f} µm steps...")
 
-        y_positions = np.arange(center_y_nm - search_radius_nm,
-                                center_y_nm + search_radius_nm + 0.5 * step_nm,
-                                step_nm)
-        z_positions = np.arange(center_z_nm - search_radius_nm,
-                                center_z_nm + search_radius_nm + 0.5 * step_nm,
-                                step_nm)
+        y_positions = np.arange(center_y_um - search_radius_um,
+                                center_y_um + search_radius_um + 0.5 * step_um,
+                                step_um)
+        z_positions = np.arange(center_z_um - search_radius_um,
+                                center_z_um + search_radius_um + 0.5 * step_um,
+                                step_um)
 
         best_result = None
         best_confidence = -1.0
         total_positions = len(y_positions) * len(z_positions)
-        
-        # Store all images and detection results for visualization
+
         search_data = []
-        
         checked = 0
 
         for Y in y_positions:
@@ -91,21 +86,19 @@ class AlignmentSearcher:
                 if checked % 10 == 0:
                     print(f"   Progress: {checked}/{total_positions} positions checked...", end='\r')
 
-                # Move stage
-                self.stage.move_abs('y', int(round(Y)))
-                self.stage.move_abs('z', int(round(Z)))
+                # Move stage (µm)
+                self.stage.move_abs('y', Y)
+                self.stage.move_abs('z', Z)
 
                 # Capture image
                 img = self.camera.acquire_single_image()
 
-                # Look for fiducial near center
                 img_center_x = img.shape[1] // 2
                 img_center_y = img.shape[0] // 2
                 img_center = (img_center_x, img_center_y)
-                
+
                 result = self.vt.find_fiducial_auto(img, expected_position=img_center, search_radius=150)
 
-                # Store data for visualization
                 search_data.append({
                     'Y': Y,
                     'Z': Z,
@@ -116,84 +109,73 @@ class AlignmentSearcher:
 
                 if result and result.get('confidence', 0.0) > best_confidence:
                     best_confidence = result['confidence']
-                    
-                    # Calculate actual stage position from pixel offset
                     found_px, found_py = result['position']
-                    
-                    # Pixel offset from center
+
                     offset_px_x = found_px - img_center_x
                     offset_px_y = found_py - img_center_y
-                    
-                    # Convert to nm
-                    # From _stage_to_pixel: px corresponds to Y, py corresponds to Z
-                    offset_nm_Y = offset_px_x * self.camera.nm_per_pixel
-                    offset_nm_Z = offset_px_y * self.camera.nm_per_pixel
-                    
-                    # Actual stage position = grid position + pixel offset
-                    actual_Y = Y + offset_nm_Y
-                    actual_Z = Z + offset_nm_Z
-                    
+
+                    # Convert pixel offset to µm
+                    offset_um_Y = offset_px_x * self.camera.um_per_pixel
+                    offset_um_Z = offset_px_y * self.camera.um_per_pixel
+
+                    actual_Y = Y + offset_um_Y
+                    actual_Z = Z + offset_um_Z
+
                     best_result = {
-                        'stage_Y': int(round(actual_Y)),
-                        'stage_Z': int(round(actual_Z)),
+                        'stage_Y': actual_Y,
+                        'stage_Z': actual_Z,
                         'grid_Y': Y,
                         'grid_Z': Z,
                         'pixel_pos': result['position'],
                         'pixel_offset': (offset_px_x, offset_px_y),
-                        'stage_offset_nm': (offset_nm_Y, offset_nm_Z),
+                        'stage_offset_um': (offset_um_Y, offset_um_Z),
                         'confidence': result['confidence'],
                         'method': result['method'],
                         'search_image': img.copy()
                     }
-        
+
         print()  # newline after progress
-        
+
         # ========================================
         # Move to corrected position and verify
         # ========================================
         if best_result:
             print(f"   ✅ {label} found!")
             print(f"      Confidence: {best_result['confidence']:.3f}")
-            print(f"      Grid position: Y={best_result['grid_Y']:.0f}, Z={best_result['grid_Z']:.0f} nm")
+            print(f"      Grid position: Y={best_result['grid_Y']:.1f}, Z={best_result['grid_Z']:.1f} µm")
             print(f"      Pixel offset: {best_result['pixel_offset']}")
-            print(f"      Stage offset (nm): {best_result['stage_offset_nm']}")
-            print(f"      Final stage position: Y={best_result['stage_Y']}, Z={best_result['stage_Z']} nm")
-            
-            # Move stage to the corrected position where fiducial should be centered
+            print(f"      Stage offset: {best_result['stage_offset_um']} µm")
+            print(f"      Final stage position: Y={best_result['stage_Y']:.1f}, Z={best_result['stage_Z']:.1f} µm")
             print(f"      📍 Moving stage to corrected position...")
+
             self.stage.move_abs('y', best_result['stage_Y'])
             self.stage.move_abs('z', best_result['stage_Z'])
-            
-            # Take verification image at corrected position
+
             verification_img = self.camera.acquire_single_image()
-            
-            # Verify centering
             img_center = (verification_img.shape[1] // 2, verification_img.shape[0] // 2)
-            verify_result = self.vt.find_fiducial_auto(verification_img, 
-                                                        expected_position=img_center, 
-                                                        search_radius=150)
-            
+            verify_result = self.vt.find_fiducial_auto(verification_img,
+                                                    expected_position=img_center,
+                                                    search_radius=150)
             if verify_result:
                 verify_px = verify_result['position']
                 verify_offset_px = (verify_px[0] - img_center[0], verify_px[1] - img_center[1])
-                verify_offset_nm = (verify_offset_px[0] * self.camera.nm_per_pixel,
-                                    verify_offset_px[1] * self.camera.nm_per_pixel)
-                verify_error = np.hypot(verify_offset_nm[0], verify_offset_nm[1])
-                
-                print(f"      ✓ Verification: offset = {verify_offset_px} px = ({verify_offset_nm[0]:.0f}, {verify_offset_nm[1]:.0f}) nm")
-                print(f"      ✓ Verification error: {verify_error:.1f} nm")
-                
-                # Update result with verification data
+                verify_offset_um = (verify_offset_px[0] * self.camera.um_per_pixel,
+                                    verify_offset_px[1] * self.camera.um_per_pixel)
+                verify_error_um = np.hypot(verify_offset_um[0], verify_offset_um[1])
+
+                print(f"      ✓ Verification: offset = {verify_offset_px} px = ({verify_offset_um[0]:.3f}, {verify_offset_um[1]:.3f}) µm")
+                print(f"      ✓ Verification error: {verify_error_um:.3f} µm")
+
                 verification_output = {
                     'stage_Y': best_result['stage_Y'],
                     'stage_Z': best_result['stage_Z'],
                     'pixel_pos': verify_result['position'],
                     'pixel_offset': verify_offset_px,
-                    'stage_offset_nm': verify_offset_nm,
+                    'stage_offset_um': verify_offset_um,
                     'confidence': verify_result['confidence'],
                     'method': verify_result['method'],
                     'image': verification_img.copy(),
-                    'verification_error_nm': verify_error
+                    'verification_error_um': verify_error_um
                 }
             else:
                 print(f"      ⚠️  Warning: Could not detect fiducial in verification image!")
@@ -201,127 +183,134 @@ class AlignmentSearcher:
         else:
             print(f"   ❌ {label} not found in search region")
             verification_output = None
-        
+
         # ========================================
         # Visualization
         # ========================================
         if plot_progress:
             self._plot_search_progress(search_data=search_data, label=label,
-                                      best_result=best_result, best_confidence=best_confidence)
-        
+                                    best_result=best_result, best_confidence=best_confidence)
+
         return verification_output
-    
+
     def search_for_fiducials_in_block(self, block_id: int, 
-                                      alignment_system,
-                                      corners: List[str] = ['top_left', 'bottom_right'],
-                                      search_radius_nm: float = 20000, 
-                                      step_nm: float = 5000,
-                                      plot_progress: bool = True) -> List[Dict[str, Any]]:
+                                    alignment_system,
+                                    corners: List[str] = ['top_left', 'bottom_right'],
+                                    search_radius_um: float = 20.0,
+                                    step_um: float = 5.0,
+                                    plot_progress: bool = True) -> List[Dict[str, Any]]:
         """
-        Search for multiple fiducials in a block.
+        Search for multiple fiducials in a block (all units in µm).
         Uses alignment_system.predict_fiducial_position() for initialization.
-        
+
         Args:
             block_id: Which block to search
             alignment_system: HierarchicalAlignment instance (for predictions)
             corners: List of corner names to find
-            search_radius_nm: Search radius around predicted position
-            step_nm: Grid step size
+            search_radius_um: Search radius around predicted position (µm)
+            step_um: Grid step size (µm)
             plot_progress: Whether to visualize each search
-        
+
         Returns:
             List of fiducial measurements (dicts with stage_Y, stage_Z, corner, etc.)
         """
         measurements = []
-        
+
         print(f"\n   🔍 Searching for {len(corners)} fiducials in Block {block_id}...")
-        
+
         for corner in corners:
-            # Get predicted position from alignment system
+            # Get predicted position from alignment system (convert nm → µm)
             try:
-                pred_Y, pred_Z = alignment_system.predict_fiducial_position(block_id, corner)
-                print(f"\n   Predicted position for Block {block_id} {corner}: ({pred_Y:.0f}, {pred_Z:.0f}) nm")
+                pred_Y_nm, pred_Z_nm = alignment_system.predict_fiducial_position(block_id, corner)
+                pred_Y_um = pred_Y_nm / 1000.0
+                pred_Z_um = pred_Z_nm / 1000.0
+                print(f"\n   Predicted position for Block {block_id} {corner}: "
+                    f"({pred_Y_um:.2f}, {pred_Z_um:.2f}) µm")
             except Exception as e:
                 print(f"\n   ⚠️  Could not predict position for Block {block_id} {corner}: {e}")
                 print(f"   Using block design position as fallback...")
-                # Fallback to design position
                 block_center = alignment_system.layout['blocks'][block_id]['design_position']
-                pred_Y = block_center[0] * 1000  # µm to nm
-                pred_Z = block_center[1] * 1000
-            
-            # Search
+                pred_Y_um = block_center[0]
+                pred_Z_um = block_center[1]
+
+            # Run fiducial search (now in µm)
             label = f"Block {block_id} {corner}"
             result = self.search_for_fiducial(
-                center_y_nm=pred_Y,
-                center_z_nm=pred_Z,
-                search_radius_nm=search_radius_nm,
-                step_nm=step_nm,
+                center_y_um=pred_Y_um,
+                center_z_um=pred_Z_um,
+                search_radius_um=search_radius_um,
+                step_um=step_um,
                 label=label,
                 plot_progress=plot_progress
             )
-            
+
             if result:
                 result['block_id'] = block_id
                 result['corner'] = corner
                 measurements.append(result)
             else:
                 print(f"   ❌ Failed to find Block {block_id} {corner}")
-        
+
         print(f"\n   ✅ Found {len(measurements)}/{len(corners)} fiducials in Block {block_id}")
-        
+
         return measurements
+
     
-    def verify_fiducial_centering(self, expected_y_nm: float, expected_z_nm: float, 
-                                  label: str = "Verification") -> Optional[Dict[str, Any]]:
+    def verify_fiducial_centering(self, expected_y_um: float, expected_z_um: float, 
+                                label: str = "Verification") -> Optional[Dict[str, Any]]:
         """
-        Move to position, capture image, verify fiducial is centered.
-        
+        Move to a position (in µm), capture image, and verify fiducial is centered.
+
         Args:
-            expected_y_nm: Expected Y position (nm)
-            expected_z_nm: Expected Z position (nm)
+            expected_y_um: Expected Y position (µm)
+            expected_z_um: Expected Z position (µm)
             label: Label for printing
-        
+
         Returns:
             dict with verification results or None if not found
         """
-        print(f"\n   🔍 Verifying fiducial at ({expected_y_nm:.0f}, {expected_z_nm:.0f}) nm...")
-        
+        print(f"\n   🔍 Verifying fiducial at ({expected_y_um:.2f}, {expected_z_um:.2f}) µm...")
+
         # Move stage
-        self.stage.move_abs('y', int(round(expected_y_nm)))
-        self.stage.move_abs('z', int(round(expected_z_nm)))
-        
+        self.stage.move_abs('y', expected_y_um)
+        self.stage.move_abs('z', expected_z_um)
+
         # Capture image
         img = self.camera.acquire_single_image()
-        
-        # Detect
+
+        # Detect fiducial near image center
         img_center = (img.shape[1] // 2, img.shape[0] // 2)
         result = self.vt.find_fiducial_auto(img, expected_position=img_center, search_radius=150)
-        
+
         if result:
             found_px = result['position']
             offset_px = (found_px[0] - img_center[0], found_px[1] - img_center[1])
-            offset_nm = (offset_px[0] * self.camera.nm_per_pixel,
-                        offset_px[1] * self.camera.nm_per_pixel)
-            error = np.hypot(offset_nm[0], offset_nm[1])
-            
-            print(f"   ✓ {label}: Found with {error:.1f} nm error")
+
+            # Convert from pixels to µm
+            offset_um = (offset_px[0] * self.camera.um_per_pixel,
+                        offset_px[1] * self.camera.um_per_pixel)
+
+            error_um = np.hypot(offset_um[0], offset_um[1])
+
+            print(f"   ✓ {label}: Found with {error_um:.3f} µm error")
             print(f"     Pixel offset: {offset_px}")
-            print(f"     Stage offset: ({offset_nm[0]:.0f}, {offset_nm[1]:.0f}) nm")
-            
+            print(f"     Stage offset: ({offset_um[0]:.3f}, {offset_um[1]:.3f}) µm")
+
             return {
-                'stage_Y': int(round(expected_y_nm)),
-                'stage_Z': int(round(expected_z_nm)),
+                'stage_Y': expected_y_um,
+                'stage_Z': expected_z_um,
                 'pixel_pos': found_px,
                 'pixel_offset': offset_px,
-                'stage_offset_nm': offset_nm,
+                'stage_offset_um': offset_um,
                 'confidence': result['confidence'],
                 'method': result['method'],
                 'image': img,
-                'error_nm': error
+                'error_um': error_um
             }
         else:
             print(f"   ❌ {label}: Fiducial not found!")
             return None
+
     
     # =========================================================================
     # VISUALIZATION METHODS
@@ -516,9 +505,11 @@ class AlignmentSearcher:
 if __name__ == "__main__":
     from HardwareControl.CameraControl.mock_camera import MockCamera
     from HardwareControl.SetupMotor.mockStage_v2 import MockXYZStage
+    from HardwareControl.SetupMotor.stageAdapter import StageAdapterUM
     from AlignmentSystem.cv_tools import VisionTools
     # Setup hardware
-    stage = MockXYZStage(start_positions={'x': 0, 'y': 0, 'z': 0})
+    stage_nm = MockXYZStage(start_positions={'x': 0, 'y': 0, 'z': 0})
+    stage = StageAdapterUM(stage_nm)
     camera = MockCamera("config/mock_layout.json", stage_ref=stage)
     camera.connect()
     stage.set_camera_observer(camera)
@@ -529,14 +520,14 @@ if __name__ == "__main__":
 
     # Test search
     result = searcher.search_for_fiducial(
-        center_y_nm=-100000,
-        center_z_nm=100000,
-        search_radius_nm=60000,
-        step_nm=20000,
+        center_y_um=-100,
+        center_z_um=100,
+        search_radius_um=60,
+        step_um=20,
         label="Test Fiducial",
         plot_progress=True
     )
 
     if result:
         print(f"Found at: ({result['stage_Y']}, {result['stage_Z']})")
-        print(f"Error: {result['verification_error_nm']:.1f} nm")
+        print(f"Error: {result['verification_error_um']:.1f} um")

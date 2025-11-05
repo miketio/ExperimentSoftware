@@ -318,7 +318,7 @@ class GMarkerDetector:
         if scales is None:
             scales = [0.6, 0.8, 1.0, 1.2, 1.5]
         if angles is None:
-            angles = list(range(-90, 181, 15))  # every 15 degrees
+            angles = list(range(-90, 271, 15))  # every 15 degrees
 
         candidates = self._template_match_candidates(patch, scales, angles, top_k=top_k)
         if not candidates:
