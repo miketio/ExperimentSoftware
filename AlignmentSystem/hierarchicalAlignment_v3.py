@@ -139,21 +139,20 @@ class HierarchicalAlignment:
                     block_id: int,
                     fiducial_measurements: List[Dict]) -> Dict:
         """
-        Perform Stage 2 block-level calibration for fine alignment.
+        Perform Stage 2 block-level calibration using DIRECT transform.
         
-        Uses precise block fiducial measurements to directly determine the block's
-        position and orientation in stage coordinates. This creates a high-precision
-        local coordinate frame for the block, independent of the rough global calibration.
+        Creates a precise block_local → stage transform from measured fiducials.
+        This bypasses the rough global transform for maximum accuracy.
         
         Args:
             block_id: Block to calibrate
             fiducial_measurements: List of dicts with keys:
-                - 'corner': Corner name
-                - 'stage_Y': Measured Y in µm (global stage frame)
-                - 'stage_Z': Measured Z in µm (global stage frame)
+                - 'corner': Corner name ('top_left', 'bottom_right')
+                - 'stage_Y': Measured Y in µm
+                - 'stage_Z': Measured Z in µm
         
         Returns:
-            dict: Block calibration results
+            dict: Block calibration results with direct transform parameters
         """
         if not self.layout.is_globally_calibrated():
             raise RuntimeError("Must perform global calibration first")
@@ -162,186 +161,109 @@ class HierarchicalAlignment:
             raise ValueError("Need at least 2 fiducial measurements for block calibration")
         
         print(f"\n{'='*70}")
-        print(f"STAGE 2: Block-Level Calibration (Block {block_id})")
+        print(f"STAGE 2: Block-Level Calibration (Block {block_id}) - DIRECT METHOD")
         print(f"{'='*70}")
         print(f"Using {len(fiducial_measurements)} fiducial measurements")
-        print(f"Strategy: Direct block pose determination from precise fiducial positions")
         
-        # Get block design data
+        # Get block and extract measured positions
         block = self.layout.get_block(block_id)
         
-        # Collect design and measured positions
-        # Design: block-local coordinates
-        # Measured: stage coordinates (precise measurements)
-        design_points_local = []
-        measured_points_stage = []
+        # For 2-point calibration (top_left and bottom_right)
+        meas_tl = next((m for m in fiducial_measurements if m['corner'] == 'top_left'), None)
+        meas_br = next((m for m in fiducial_measurements if m['corner'] == 'bottom_right'), None)
         
-        for fid in fiducial_measurements:
-            corner = fid['corner']
-            
-            # Get fiducial design position in block-local frame
-            fiducial_design = block.get_fiducial(corner)
-            design_points_local.append((fiducial_design.u, fiducial_design.v))
-            
-            # Get measured stage position (precise)
-            measured_points_stage.append((fid['stage_Y'], fid['stage_Z']))
-            
-            print(f"  {corner}:")
-            print(f"    Design (block-local): ({fiducial_design.u:>7.2f}, {fiducial_design.v:>7.2f}) µm")
-            print(f"    Measured (stage):     ({fid['stage_Y']:>7.2f}, {fid['stage_Z']:>7.2f}) µm")
+        if not (meas_tl and meas_br):
+            raise ValueError("Need 'top_left' and 'bottom_right' measurements for block calibration")
         
-        # Create a precise block-to-stage transform
-        # This directly calibrates: block_local → stage
-        # Using precise fiducial measurements (not going through rough global transform)
-        block_transform = CoordinateTransformV3(layout=None)
-        result = block_transform.calibrate(
-            measured_points=measured_points_stage,  # Precise stage measurements
-            design_points=design_points_local        # Block-local design positions
-        )
+        # Measured stage positions
+        meas_tl_Y, meas_tl_Z = meas_tl['stage_Y'], meas_tl['stage_Z']
+        meas_br_Y, meas_br_Z = meas_br['stage_Y'], meas_br['stage_Z']
         
-        print(f"\n✅ Block {block_id} calibration complete:")
-        print(f"  Block rotation (in stage frame): {result['angle_deg']:.6f}°")
-        print(f"  Block translation (in stage frame): ({result['translation_um'][0]:.2f}, {result['translation_um'][1]:.2f}) µm")
-        print(f"  Mean residual error: {result['mean_error_um']:.6f} µm")
-        print(f"  Max residual error: {result['max_error_um']:.6f} µm")
+        print(f"  top_left measured:     ({meas_tl_Y:.3f}, {meas_tl_Z:.3f}) µm")
+        print(f"  bottom_right measured: ({meas_br_Y:.3f}, {meas_br_Z:.3f}) µm")
         
-        # Now we need to figure out what this means in terms of "correction"
-        # The block transform gives us: block_local → stage directly
-        # But we need to store it as a correction relative to what the global transform predicts
+        # Design positions (block-local)
+        fid_tl_design = block.get_fiducial('top_left')
+        fid_br_design = block.get_fiducial('bottom_right')
+        design_tl_u, design_tl_v = fid_tl_design.u, fid_tl_design.v
+        design_br_u, design_br_v = fid_br_design.u, fid_br_design.v
         
-        # Get block center in design coordinates
-        block_center = block.design_position
+        print(f"  top_left design:       ({design_tl_u:.3f}, {design_tl_v:.3f}) µm (local)")
+        print(f"  bottom_right design:   ({design_br_u:.3f}, {design_br_v:.3f}) µm (local)")
         
-        # What does the global transform predict for block center?
-        self.transform.sync_with_runtime()
-        predicted_center_Y, predicted_center_Z = self.transform.design_to_stage(
-            block_center.u, block_center.v
-        )
+        # Calculate block rotation from vector angles
+        vec_stage_Y = meas_br_Y - meas_tl_Y
+        vec_stage_Z = meas_br_Z - meas_tl_Z
+        vec_design_u = design_br_u - design_tl_u
+        vec_design_v = design_br_v - design_tl_v
         
-        # What does the block transform say about where (0, 0) in block-local should be?
-        # For block-local (0, 0), which is at bottom-left corner:
-        block_size = self.layout.block_layout.block_size
+        angle_stage_deg = math.degrees(math.atan2(vec_stage_Z, vec_stage_Y))
+        angle_design_deg = math.degrees(math.atan2(vec_design_v, vec_design_u))
+        block_rotation_deg = angle_stage_deg - angle_design_deg
+        block_rotation_rad = math.radians(block_rotation_deg)
         
-        # Block center in block-local coordinates
-        if block_size:
-            center_local_u = block_size / 2.0
-            center_local_v = block_size / 2.0
-        else:
-            # If block_size not available, estimate from fiducials
-            center_local_u = sum(p[0] for p in design_points_local) / len(design_points_local)
-            center_local_v = sum(p[1] for p in design_points_local) / len(design_points_local)
+        cos_theta = math.cos(block_rotation_rad)
+        sin_theta = math.sin(block_rotation_rad)
         
-        # Apply block transform to get actual center position in stage
-        cos_a = math.cos(math.radians(result['angle_deg']))
-        sin_a = math.sin(math.radians(result['angle_deg']))
+        print(f"\n  Calculated rotation: {block_rotation_deg:.6f}°")
         
-        actual_center_Y = (result['translation_um'][0] + 
-                        cos_a * center_local_u - sin_a * center_local_v)
-        actual_center_Z = (result['translation_um'][1] + 
-                        sin_a * center_local_u + cos_a * center_local_v)
+        # Calculate block origin (bottom-left in stage coords)
+        # We know: stage = origin + R * local
+        # So: origin = stage - R * local
+        block_origin_Y = meas_tl_Y - (cos_theta * design_tl_u - sin_theta * design_tl_v)
+        block_origin_Z = meas_tl_Z - (sin_theta * design_tl_u + cos_theta * design_tl_v)
         
-        # The correction is the difference
-        correction_translation = (
-            actual_center_Y - predicted_center_Y,
-            actual_center_Z - predicted_center_Z
-        )
+        print(f"  Calculated origin: ({block_origin_Y:.3f}, {block_origin_Z:.3f}) µm")
         
-        # For rotation, the correction is the difference between:
-        # - What block transform found
-        # - What global transform has
-        global_rotation = self.transform.global_transform.rotation_deg
-        correction_rotation = result['angle_deg'] - global_rotation
+        # Verify accuracy by back-transforming
+        verify_tl_Y = block_origin_Y + (cos_theta * design_tl_u - sin_theta * design_tl_v)
+        verify_tl_Z = block_origin_Z + (sin_theta * design_tl_u + cos_theta * design_tl_v)
+        verify_br_Y = block_origin_Y + (cos_theta * design_br_u - sin_theta * design_br_v)
+        verify_br_Z = block_origin_Z + (sin_theta * design_br_u + cos_theta * design_br_v)
         
-        print(f"\n📊 Block correction analysis:")
-        print(f"  Global transform predicts center at: ({predicted_center_Y:.2f}, {predicted_center_Z:.2f}) µm")
-        print(f"  Block calibration finds center at:   ({actual_center_Y:.2f}, {actual_center_Z:.2f}) µm")
-        print(f"  Correction needed: ({correction_translation[0]:.3f}, {correction_translation[1]:.3f}) µm")
-        print(f"  Global rotation: {global_rotation:.6f}°")
-        print(f"  Block rotation:  {result['angle_deg']:.6f}°")
-        print(f"  Rotation correction: {correction_rotation:.6f}°")
+        error_tl = math.hypot(verify_tl_Y - meas_tl_Y, verify_tl_Z - meas_tl_Z)
+        error_br = math.hypot(verify_br_Y - meas_br_Y, verify_br_Z - meas_br_Z)
+        mean_error = (error_tl + error_br) / 2.0
+        max_error = max(error_tl, error_br)
         
-        # Store the correction in RuntimeLayout
+        print(f"\n✅ Verification (back-transform):")
+        print(f"  top_left error:     {error_tl:.6f} µm")
+        print(f"  bottom_right error: {error_br:.6f} µm")
+        print(f"  Mean error:         {mean_error:.6f} µm")
+        
+        # Store direct transform parameters in RuntimeLayout
+        # We store: rotation, origin (translation), for direct block_local → stage
         self.layout.set_block_calibration(
             block_id=block_id,
-            rotation=correction_rotation,
-            translation=correction_translation,
-            calibration_error=result['mean_error_um'],
-            num_points=result['num_points']
+            rotation=block_rotation_deg,
+            translation=(block_origin_Y, block_origin_Z),
+            calibration_error=mean_error,
+            num_points=2
         )
-        
-        # Sync transform to pick up new block calibration
-        self.transform.sync_with_runtime()
         
         return {
             'stage': 'block',
             'block_id': block_id,
-            'num_fiducials': len(fiducial_measurements),
-            'rotation_deg': correction_rotation,
-            'translation_um': correction_translation,
-            'mean_error_um': result['mean_error_um'],
-            'max_error_um': result['max_error_um'],
-            'method': result['method'],
-            # Additional info for debugging
-            'absolute_rotation_deg': result['angle_deg'],
-            'absolute_translation_um': result['translation_um'],
-            'predicted_center_stage': (predicted_center_Y, predicted_center_Z),
-            'actual_center_stage': (actual_center_Y, actual_center_Z)
+            'num_fiducials': 2,
+            'rotation_deg': block_rotation_deg,
+            'origin_stage_um': (block_origin_Y, block_origin_Z),
+            'mean_error_um': mean_error,
+            'max_error_um': max_error,
+            'method': 'direct_2point_transform'
         }
     
     # ========================================================================
     # PREDICTION METHODS (delegate to CoordinateTransformV3)
     # ========================================================================
-    
-    def get_fiducial_stage_position(self,
-                                 block_id: int,
-                                 corner: str) -> Tuple[float, float]:
-        """
-        Predict stage position of a fiducial marker.
         
-        Uses global calibration + block calibration (if available).
-        
-        Args:
-            block_id: Block identifier
-            corner: Corner name ('top_left', 'bottom_right', etc.)
-        
-        Returns:
-            (Y, Z): Predicted stage coordinates in µm
-        
-        Raises:
-            RuntimeError: If not globally calibrated
-        """
-        if not self.layout.is_globally_calibrated():
-            raise RuntimeError(
-                "Cannot predict positions - global calibration not performed. "
-                "Call calibrate_global() first."
-            )
-        
-        # Get fiducial local coordinates
-        block = self.layout.get_block(block_id)
-        fiducial = block.get_fiducial(corner)
-        
-        # Update transform with latest RuntimeLayout calibration
-        self.transform.sync_with_runtime()
-        
-        # Delegate to CoordinateTransformV3
-        # TODO: This needs block-aware logic in CoordinateTransformV3
-        # For now, use block_local_to_stage if available
-        try:
-            return self.transform.block_local_to_stage(
-                block_id, fiducial.u, fiducial.v
-            )
-        except Exception as e:
-            raise RuntimeError(
-                f"Could not predict fiducial position: {e}. "
-                f"Make sure CoordinateTransformV3 is properly configured with RuntimeLayout."
-            )
-    
     def get_grating_stage_position(self,
                                 block_id: int,
                                 waveguide: int,
                                 side: str) -> Tuple[float, float]:
         """
         Predict stage position of a grating coupler.
+        
+        Uses direct block transform if available, otherwise falls back to global.
         
         Args:
             block_id: Block identifier
@@ -350,9 +272,6 @@ class HierarchicalAlignment:
         
         Returns:
             (Y, Z): Predicted stage coordinates in µm
-        
-        Raises:
-            RuntimeError: If not globally calibrated
         """
         if not self.layout.is_globally_calibrated():
             raise RuntimeError(
@@ -363,21 +282,133 @@ class HierarchicalAlignment:
         # Get grating local coordinates
         block = self.layout.get_block(block_id)
         grating = block.get_grating(waveguide, side)
+        grating_u = grating.position.u
+        grating_v = grating.position.v
         
-        # Update transform with latest RuntimeLayout calibration
-        self.transform.sync_with_runtime()
+        # Use DIRECT block transform if available
+        if self.layout.is_block_calibrated(block_id):
+            block_transform = self.layout.get_block_transform(block_id)
+            
+            # Get stored direct transform parameters
+            # rotation_deg is the block rotation
+            # translation_um is the block origin
+            rotation_rad = math.radians(block_transform.rotation_deg)
+            origin_Y = block_transform.translation_um.u
+            origin_Z = block_transform.translation_um.v
+            
+            cos_theta = math.cos(rotation_rad)
+            sin_theta = math.sin(rotation_rad)
+            
+            # Apply direct transform: stage = origin + R * local
+            stage_Y = origin_Y + (cos_theta * grating_u - sin_theta * grating_v)
+            stage_Z = origin_Z + (sin_theta * grating_u + cos_theta * grating_v)
+            
+            return (stage_Y, stage_Z)
         
-        # Delegate to CoordinateTransformV3
-        try:
-            return self.transform.block_local_to_stage(
-                block_id, grating.position.u, grating.position.v
-            )
-        except Exception as e:
+        else:
+            # Fallback to global transform (rough prediction)
+            print(f"⚠️  Warning: Block {block_id} not calibrated, using rough global transform")
+            self.transform.sync_with_runtime()
+            return self.transform.block_local_to_stage(block_id, grating_u, grating_v)
+        
+    def get_fiducial_stage_position(self,
+                                block_id: int,
+                                corner: str) -> Tuple[float, float]:
+        """
+        Predict stage position of a fiducial marker.
+        
+        Uses direct block transform if available, otherwise falls back to global.
+        
+        Args:
+            block_id: Block identifier
+            corner: Corner name ('top_left', 'bottom_right', etc.)
+        
+        Returns:
+            (Y, Z): Predicted stage coordinates in µm
+        """
+        if not self.layout.is_globally_calibrated():
             raise RuntimeError(
-                f"Could not predict grating position: {e}. "
-                f"Make sure CoordinateTransformV3 is properly configured with RuntimeLayout."
+                "Cannot predict positions - global calibration not performed. "
+                "Call calibrate_global() first."
             )
-    
+        
+        # Get fiducial local coordinates
+        block = self.layout.get_block(block_id)
+        fiducial = block.get_fiducial(corner)
+        fid_u = fiducial.u
+        fid_v = fiducial.v
+        
+        # Use DIRECT block transform if available
+        if self.layout.is_block_calibrated(block_id):
+            block_transform = self.layout.get_block_transform(block_id)
+            
+            rotation_rad = math.radians(block_transform.rotation_deg)
+            origin_Y = block_transform.translation_um.u
+            origin_Z = block_transform.translation_um.v
+            
+            cos_theta = math.cos(rotation_rad)
+            sin_theta = math.sin(rotation_rad)
+            
+            stage_Y = origin_Y + (cos_theta * fid_u - sin_theta * fid_v)
+            stage_Z = origin_Z + (sin_theta * fid_u + cos_theta * fid_v)
+            
+            return (stage_Y, stage_Z)
+        
+        else:
+            # Fallback to global transform
+            print(f"⚠️  Warning: Block {block_id} not calibrated, using rough global transform")
+            self.transform.sync_with_runtime()
+            return self.transform.block_local_to_stage(block_id, fid_u, fid_v)
+        
+
+    def get_fiducial_stage_position(self,
+                                block_id: int,
+                                corner: str) -> Tuple[float, float]:
+        """
+        Predict stage position of a fiducial marker.
+        
+        Uses direct block transform if available, otherwise falls back to global.
+        
+        Args:
+            block_id: Block identifier
+            corner: Corner name ('top_left', 'bottom_right', etc.)
+        
+        Returns:
+            (Y, Z): Predicted stage coordinates in µm
+        """
+        if not self.layout.is_globally_calibrated():
+            raise RuntimeError(
+                "Cannot predict positions - global calibration not performed. "
+                "Call calibrate_global() first."
+            )
+        
+        # Get fiducial local coordinates
+        block = self.layout.get_block(block_id)
+        fiducial = block.get_fiducial(corner)
+        fid_u = fiducial.u
+        fid_v = fiducial.v
+        
+        # Use DIRECT block transform if available
+        if self.layout.is_block_calibrated(block_id):
+            block_transform = self.layout.get_block_transform(block_id)
+            
+            rotation_rad = math.radians(block_transform.rotation_deg)
+            origin_Y = block_transform.translation_um.u
+            origin_Z = block_transform.translation_um.v
+            
+            cos_theta = math.cos(rotation_rad)
+            sin_theta = math.sin(rotation_rad)
+            
+            stage_Y = origin_Y + (cos_theta * fid_u - sin_theta * fid_v)
+            stage_Z = origin_Z + (sin_theta * fid_u + cos_theta * fid_v)
+            
+            return (stage_Y, stage_Z)
+        
+        else:
+            # Fallback to global transform
+            print(f"⚠️  Warning: Block {block_id} not calibrated, using rough global transform")
+            self.transform.sync_with_runtime()
+            return self.transform.block_local_to_stage(block_id, fid_u, fid_v)
     # ========================================================================
     # UTILITY METHODS
     # ========================================================================
