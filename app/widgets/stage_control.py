@@ -29,7 +29,28 @@ class StageMoveWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
-
+class GoToWorker(QThread):
+    """Worker thread for Go To positioning (sequential X→Y→Z)."""
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    
+    def __init__(self, stage, x, y, z):
+        super().__init__()
+        self.stage = stage
+        self.x = x
+        self.y = y
+        self.z = z
+    
+    def run(self):
+        try:
+            # Move sequentially to avoid collision
+            self.stage.move_abs('x', self.x)
+            self.stage.move_abs('y', self.y)
+            self.stage.move_abs('z', self.z)
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+            
 class StageControlWidget(QWidget):
     """Stage jog and positioning controls."""
     
@@ -166,20 +187,42 @@ class StageControlWidget(QWidget):
         self.move_worker.finished.connect(lambda: self.signals.stage_move_complete.emit())
         self.move_worker.error.connect(lambda e: self.signals.stage_error.emit(e))
         self.move_worker.start()
-    
-    def _go_to_position(self):
-        """Move to specified position."""
-        if self.stage is None:
-            return
         
-        # Move all axes
-        for axis in ['x', 'y', 'z']:
-            pos = self.goto_inputs[axis].value()
-            worker = StageMoveWorker(self.stage, axis, pos, is_relative=False)
-            worker.finished.connect(lambda: self.signals.stage_move_complete.emit())
-            worker.error.connect(lambda e: self.signals.stage_error.emit(e))
-            worker.start()
-            # Note: In production, should wait for completion or queue moves
+    def _go_to_position(self):
+            """Move to specified position (sequential X→Y→Z)."""
+            if self.stage is None:
+                return
+            
+            # Get target positions
+            target_x = self.goto_inputs['x'].value()
+            target_y = self.goto_inputs['y'].value()
+            target_z = self.goto_inputs['z'].value()
+            
+            self.signals.status_message.emit(
+                f"Moving to X={target_x:.2f}, Y={target_y:.2f}, Z={target_z:.2f}µm..."
+            )
+            
+            # Create worker for sequential movement
+            self.move_worker = GoToWorker(
+                self.stage, target_x, target_y, target_z
+            )
+            self.move_worker.finished.connect(
+                lambda: self.signals.stage_move_complete.emit()
+            )
+            self.move_worker.error.connect(
+                lambda e: self.signals.stage_error.emit(e)
+            )
+            self.move_worker.finished.connect(
+                lambda: self.signals.status_message.emit("Go To complete")
+            )
+            
+            # Disable button during movement
+            self.btn_goto.setEnabled(False)
+            self.move_worker.finished.connect(
+                lambda: self.btn_goto.setEnabled(True)
+            )
+            
+            self.move_worker.start()
     
     def _update_position_display(self, axis: str, position: float):
         """Update position display."""

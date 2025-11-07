@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QTabWidget, QMenuBar, QStatusBar, QMessageBox, QFileDialog
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QActionGroup
 from pathlib import Path
 
 from app.system_state import SystemState
@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         camera,
         stage,
         hw_manager,
+        runtime_layout,
         parent=None
     ):
         super().__init__(parent)
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow):
         self.camera = camera
         self.stage = stage
         self.hw_manager = hw_manager
+        self.runtime_layout = runtime_layout
         
         # Camera stream thread
         self.camera_thread = None
@@ -82,6 +84,34 @@ class MainWindow(QMainWindow):
     
     def _init_ui(self):
         """Initialize UI layout."""
+
+        # Create alignment controller FIRST (needed by alignment_panel)
+        from app.controllers.alignment_controller import AlignmentController
+        self.alignment_controller = AlignmentController(
+            state=self.state,
+            signals=self.signals,
+            camera=self.camera,
+            stage=self.stage,
+            runtime_layout=self.runtime_layout  # Added this parameter
+        )
+        
+        # Create navigation controller
+        from app.controllers.navigation_controller import NavigationController
+        self.navigation_controller = NavigationController(
+            state=self.state,
+            signals=self.signals,
+            stage=self.stage,
+            alignment_system=self.alignment_controller  # Share alignment
+        )
+        # Add to imports at top of file
+        from app.controllers.autofocus_controller import AutofocusController
+
+        # In __init__ method, add after other controllers:
+        self.autofocus_controller = AutofocusController(
+            camera=self.camera,  
+            stage=self.stage,
+            signals=self.signals
+        )
         # Central widget
         central = QWidget()
         self.setCentralWidget(central)
@@ -106,7 +136,8 @@ class MainWindow(QMainWindow):
         control_tabs.addTab(self.stage_control, "Stage Control")
         
         # Alignment panel tab
-        self.alignment_panel = AlignmentPanelWidget(self.state, self.signals)
+        self.alignment_panel = AlignmentPanelWidget(self.state, self.signals,
+                                                    self.alignment_controller)
         control_tabs.addTab(self.alignment_panel, "Alignment")
         
         top_splitter.addWidget(control_tabs)
@@ -121,7 +152,7 @@ class MainWindow(QMainWindow):
         
         # Bottom section: Waveguide panel
         self.waveguide_panel = WaveguidePanelWidget(
-            self.state, self.signals, self.stage
+            self.state, self.signals, self.stage, self.navigation_controller
         )
         main_layout.addWidget(self.waveguide_panel, stretch=2)
         
@@ -178,9 +209,39 @@ class MainWindow(QMainWindow):
         goto_target_action.triggered.connect(self._goto_target)
         nav_menu.addAction(goto_target_action)
         
-        # View menu
         view_menu = menubar.addMenu("&View")
         
+        # Colormap submenu
+        colormap_menu = view_menu.addMenu("&Colormap")
+        
+        # Create action group for colormap (mutually exclusive)
+        colormap_group = QActionGroup(self)
+        colormap_group.setExclusive(True)
+        
+        colormaps = ['gray', 'jet', 'hot', 'viridis', 'plasma', 'inferno', 'turbo', 'rainbow']
+        for cmap in colormaps:
+            action = QAction(cmap.capitalize(), self)
+            action.setCheckable(True)
+            action.setData(cmap)
+            action.triggered.connect(lambda checked, c=cmap: self._set_colormap(c))
+            colormap_group.addAction(action)
+            colormap_menu.addAction(action)
+            
+            # Set gray as default checked
+            if cmap == self.state.camera.colormap:
+                action.setChecked(True)
+        
+        # Invert colors option
+        view_menu.addSeparator()
+        self.invert_action = QAction("&Invert Colors", self)
+        self.invert_action.setCheckable(True)
+        self.invert_action.setChecked(False)
+        self.invert_action.triggered.connect(self._toggle_invert)
+        view_menu.addAction(self.invert_action)
+        
+        view_menu.addSeparator()
+        
+        # Zoom controls
         zoom_fit_action = QAction("Zoom to &Fit", self)
         zoom_fit_action.setShortcut("Ctrl+0")
         zoom_fit_action.triggered.connect(self.camera_view.zoom_fit)
@@ -190,6 +251,30 @@ class MainWindow(QMainWindow):
         zoom_100_action.setShortcut("Ctrl+1")
         zoom_100_action.triggered.connect(lambda: self.camera_view.set_zoom(1.0))
         view_menu.addAction(zoom_100_action)
+        
+        zoom_200_action = QAction("Zoom &200%", self)
+        zoom_200_action.setShortcut("Ctrl+2")
+        zoom_200_action.triggered.connect(lambda: self.camera_view.set_zoom(2.0))
+        view_menu.addAction(zoom_200_action)
+        
+        zoom_50_action = QAction("Zoom &50%", self)
+        zoom_50_action.triggered.connect(lambda: self.camera_view.set_zoom(0.5))
+        view_menu.addAction(zoom_50_action)
+        
+        view_menu.addSeparator()
+        
+        # Display options
+        self.crosshair_action = QAction("Show &Crosshair", self)
+        self.crosshair_action.setCheckable(True)
+        self.crosshair_action.setChecked(self.state.camera.show_crosshair)
+        self.crosshair_action.triggered.connect(self._toggle_crosshair)
+        view_menu.addAction(self.crosshair_action)
+        
+        self.scalebar_action = QAction("Show &Scale Bar", self)
+        self.scalebar_action.setCheckable(True)
+        self.scalebar_action.setChecked(self.state.camera.show_scale_bar)
+        self.scalebar_action.triggered.connect(self._toggle_scalebar)
+        view_menu.addAction(self.scalebar_action)
         
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
@@ -225,17 +310,17 @@ class MainWindow(QMainWindow):
             print("[MainWindow] No camera available")
             return
         
-        self.camera_thread = CameraStreamThread(
-            camera=self.camera,
-            target_fps=20
-        )
+        self.camera_thread = CameraStreamThread(camera=self.camera, target_fps=20)
         
-        # Connect camera thread signals
+        # Connect signals
         self.camera_thread.frame_ready.connect(self.camera_view.update_frame)
         self.camera_thread.stats_updated.connect(self.camera_view.update_stats)
         self.camera_thread.error_occurred.connect(
             lambda msg: self.signals.error_occurred.emit("Camera Error", msg)
         )
+        
+        # FIX: Give camera_view reference to thread for control
+        self.camera_view.set_camera_thread(self.camera_thread)
         
         # Start thread
         self.camera_thread.start()
@@ -270,6 +355,66 @@ class MainWindow(QMainWindow):
             # Silently ignore position read errors (too noisy)
             pass
     
+    # ========================================================================
+    # View Menu Actions
+    # ========================================================================
+    
+    def _set_colormap(self, colormap: str):
+        """Set colormap from menu."""
+        self.state.camera.colormap = colormap
+        if self.camera_thread:
+            self.camera_thread.color_manager.set_colormap(colormap)
+        self.signals.colormap_changed.emit(colormap)
+        self.signals.status_message.emit(f"Colormap: {colormap.capitalize()}")
+    
+    def _toggle_invert(self, checked: bool):
+        """Toggle color inversion - FIXED."""
+        if self.camera_thread is None:
+            return
+        
+        # Get color manager and modify instance variable
+        color_mgr = self.camera_thread.color_manager
+        
+        # Store original colormap if not already stored
+        if not hasattr(self, '_original_colormap'):
+            self._original_colormap = self.state.camera.colormap
+        
+        if checked:
+            # Create inverted version by using thread's mutex
+            from PyQt6.QtCore import QMutexLocker
+            with QMutexLocker(self.camera_thread.mutex):
+                # Invert by setting flag that will be checked during rendering
+                if not hasattr(color_mgr, 'invert_enabled'):
+                    color_mgr.invert_enabled = False
+                color_mgr.invert_enabled = True
+            
+            self.signals.status_message.emit("Colors inverted")
+        else:
+            from PyQt6.QtCore import QMutexLocker
+            with QMutexLocker(self.camera_thread.mutex):
+                if hasattr(color_mgr, 'invert_enabled'):
+                    color_mgr.invert_enabled = False
+            
+            self.signals.status_message.emit("Colors normal")
+        
+        # Force frame update
+        self.signals.color_scale_changed.emit()
+    
+    def _toggle_crosshair(self, checked: bool):
+        """Toggle crosshair display."""
+        self.state.camera.show_crosshair = checked
+        self.camera_view.update_overlay_settings()
+    
+    def _toggle_scalebar(self, checked: bool):
+        """Toggle scale bar display."""
+        self.state.camera.show_scale_bar = checked
+        self.camera_view.update_overlay_settings()
+    
+    def _on_colormap_changed_signal(self, colormap: str):
+        """Handle colormap change signal (to sync menu with other controls)."""
+        # This ensures menu stays in sync if colormap is changed elsewhere
+        pass
+
     # ========================================================================
     # Menu Actions
     # ========================================================================

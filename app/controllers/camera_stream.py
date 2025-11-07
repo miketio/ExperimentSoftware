@@ -62,15 +62,7 @@ class ColorScaleManager:
         self.colormap = colormap
     
     def apply_scaling(self, image: np.ndarray) -> np.ndarray:
-        """
-        Apply color scaling to image.
-        
-        Args:
-            image: Raw image (uint16 or uint8)
-        
-        Returns:
-            8-bit RGB image (H, W, 3) for display
-        """
+        """Apply color scaling to image - WITH INVERT SUPPORT."""
         if image is None or image.size == 0:
             return np.zeros((100, 100, 3), dtype=np.uint8)
         
@@ -84,7 +76,7 @@ class ColorScaleManager:
         else:
             vmin, vmax = self.min_val, self.max_val
         
-        # Update stats (for display)
+        # Update stats
         self.last_stats = {
             'min': float(np.min(image)),
             'max': float(np.max(image)),
@@ -101,13 +93,15 @@ class ColorScaleManager:
         
         img_8bit = (scaled * 255).astype(np.uint8)
         
+        # FIX: Check for inversion flag
+        if hasattr(self, 'invert_enabled') and self.invert_enabled:
+            img_8bit = 255 - img_8bit
+        
         # Apply colormap
         cmap = self.COLORMAPS.get(self.colormap)
         if cmap is not None:
-            # Apply OpenCV colormap
             img_colored = cv2.applyColorMap(img_8bit, cmap)
         else:
-            # Grayscale - convert to RGB for consistency
             img_colored = cv2.cvtColor(img_8bit, cv2.COLOR_GRAY2RGB)
         
         return img_colored

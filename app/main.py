@@ -108,6 +108,20 @@ def main():
     layout_path = project_root / "config" / "mock_layout.json"
     hw_manager = HardwareManager(layout_path=str(layout_path))
     
+    # Load RuntimeLayout
+    print("\nLoading RuntimeLayout...")
+    try:
+        from config.layout_models import RuntimeLayout
+        runtime_layout = RuntimeLayout.from_json_file(str(layout_path))
+        print(f"✓ RuntimeLayout loaded: {runtime_layout.design_name}")
+    except Exception as e:
+        QMessageBox.critical(
+            None,
+            "Layout Load Failed",
+            f"Failed to load layout configuration:\n\n{e}\n\nApplication will exit."
+        )
+        print(f"\nERROR: {e}")
+        return 1
     # Get hardware availability
     availability = hw_manager.get_hardware_availability()
     print(f"\nHardware Detection:")
@@ -149,6 +163,7 @@ def main():
     
     signals = SystemSignals()
     
+
     # Create main window
     print("\nLaunching GUI...")
     main_window = MainWindow(
@@ -156,7 +171,8 @@ def main():
         signals=signals,
         camera=hw_manager.get_camera(),
         stage=hw_manager.get_stage(),
-        hw_manager=hw_manager
+        hw_manager=hw_manager,
+        runtime_layout=runtime_layout  # NEW: Pass layout for alignment
     )
     
     main_window.show()

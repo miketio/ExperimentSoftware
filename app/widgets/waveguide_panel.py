@@ -10,12 +10,13 @@ from PyQt6.QtCore import Qt
 class WaveguidePanelWidget(QWidget):
     """Waveguide table and navigation controls."""
     
-    def __init__(self, state, signals, stage, parent=None):
+    def __init__(self, state, signals, stage, navigation_controller, parent=None):
         super().__init__(parent)
         self.state = state
         self.signals = signals
         self.stage = stage
-        
+        self.navigation = navigation_controller  # NEW
+
         self._init_ui()
         self._connect_signals()
     

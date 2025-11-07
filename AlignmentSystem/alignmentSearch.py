@@ -193,67 +193,67 @@ class AlignmentSearcher:
 
         return verification_output
 
-    def search_for_fiducials_in_block(self, block_id: int, 
-                                    alignment_system,
-                                    corners: List[str] = ['top_left', 'bottom_right'],
-                                    search_radius_um: float = 20.0,
-                                    step_um: float = 5.0,
-                                    plot_progress: bool = True) -> List[Dict[str, Any]]:
-        """
-        Search for multiple fiducials in a block (all units in µm).
-        Uses alignment_system.predict_fiducial_position() for initialization.
+    # def search_for_fiducials_in_block(self, block_id: int, 
+    #                                 alignment_system,
+    #                                 corners: List[str] = ['top_left', 'bottom_right'],
+    #                                 search_radius_um: float = 20.0,
+    #                                 step_um: float = 5.0,
+    #                                 plot_progress: bool = True) -> List[Dict[str, Any]]:
+    #     """
+    #     Search for multiple fiducials in a block (all units in µm).
+    #     Uses alignment_system.predict_fiducial_position() for initialization.
 
-        Args:
-            block_id: Which block to search
-            alignment_system: HierarchicalAlignment instance (for predictions)
-            corners: List of corner names to find
-            search_radius_um: Search radius around predicted position (µm)
-            step_um: Grid step size (µm)
-            plot_progress: Whether to visualize each search
+    #     Args:
+    #         block_id: Which block to search
+    #         alignment_system: HierarchicalAlignment instance (for predictions)
+    #         corners: List of corner names to find
+    #         search_radius_um: Search radius around predicted position (µm)
+    #         step_um: Grid step size (µm)
+    #         plot_progress: Whether to visualize each search
 
-        Returns:
-            List of fiducial measurements (dicts with stage_Y, stage_Z, corner, etc.)
-        """
-        measurements = []
+    #     Returns:
+    #         List of fiducial measurements (dicts with stage_Y, stage_Z, corner, etc.)
+    #     """
+    #     measurements = []
 
-        print(f"\n   🔍 Searching for {len(corners)} fiducials in Block {block_id}...")
+    #     print(f"\n   🔍 Searching for {len(corners)} fiducials in Block {block_id}...")
 
-        for corner in corners:
-            # Get predicted position from alignment system (convert nm → µm)
-            try:
-                pred_Y_nm, pred_Z_nm = alignment_system.predict_fiducial_position(block_id, corner)
-                pred_Y_um = pred_Y_nm / 1000.0
-                pred_Z_um = pred_Z_nm / 1000.0
-                print(f"\n   Predicted position for Block {block_id} {corner}: "
-                    f"({pred_Y_um:.2f}, {pred_Z_um:.2f}) µm")
-            except Exception as e:
-                print(f"\n   ⚠️  Could not predict position for Block {block_id} {corner}: {e}")
-                print(f"   Using block design position as fallback...")
-                block_center = alignment_system.layout['blocks'][block_id]['design_position']
-                pred_Y_um = block_center[0]
-                pred_Z_um = block_center[1]
+    #     for corner in corners:
+    #         # Get predicted position from alignment system (convert nm → µm)
+    #         try:
+    #             pred_Y_nm, pred_Z_nm = alignment_system.predict_fiducial_position(block_id, corner)
+    #             pred_Y_um = pred_Y_nm / 1000.0
+    #             pred_Z_um = pred_Z_nm / 1000.0
+    #             print(f"\n   Predicted position for Block {block_id} {corner}: "
+    #                 f"({pred_Y_um:.2f}, {pred_Z_um:.2f}) µm")
+    #         except Exception as e:
+    #             print(f"\n   ⚠️  Could not predict position for Block {block_id} {corner}: {e}")
+    #             print(f"   Using block design position as fallback...")
+    #             block_center = alignment_system.layout['blocks'][block_id]['design_position']
+    #             pred_Y_um = block_center[0]
+    #             pred_Z_um = block_center[1]
 
-            # Run fiducial search (now in µm)
-            label = f"Block {block_id} {corner}"
-            result = self.search_for_fiducial(
-                center_y_um=pred_Y_um,
-                center_z_um=pred_Z_um,
-                search_radius_um=search_radius_um,
-                step_um=step_um,
-                label=label,
-                plot_progress=plot_progress
-            )
+    #         # Run fiducial search (now in µm)
+    #         label = f"Block {block_id} {corner}"
+    #         result = self.search_for_fiducial(
+    #             center_y_um=pred_Y_um,
+    #             center_z_um=pred_Z_um,
+    #             search_radius_um=search_radius_um,
+    #             step_um=step_um,
+    #             label=label,
+    #             plot_progress=plot_progress
+    #         )
 
-            if result:
-                result['block_id'] = block_id
-                result['corner'] = corner
-                measurements.append(result)
-            else:
-                print(f"   ❌ Failed to find Block {block_id} {corner}")
+    #         if result:
+    #             result['block_id'] = block_id
+    #             result['corner'] = corner
+    #             measurements.append(result)
+    #         else:
+    #             print(f"   ❌ Failed to find Block {block_id} {corner}")
 
-        print(f"\n   ✅ Found {len(measurements)}/{len(corners)} fiducials in Block {block_id}")
+    #     print(f"\n   ✅ Found {len(measurements)}/{len(corners)} fiducials in Block {block_id}")
 
-        return measurements
+    #     return measurements
 
     
     def verify_fiducial_centering(self, expected_y_um: float, expected_z_um: float, 
