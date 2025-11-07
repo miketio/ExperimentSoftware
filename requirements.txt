@@ -1,0 +1,50 @@
+# requirements.txt
+# Core dependencies for Camera + Stage Control Project with REST API
+
+# ===================================
+# Camera Control (Andor Zyla SDK3)
+# ===================================
+pylablib>=1.4.1
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# ===================================
+# Stage Control (SmarAct MCS)
+# ===================================
+# Note: SmarAct MCS Python wrapper must be installed separately
+# from SmarAct SDK (MCSControl_PythonWrapper)
+
+# ===================================
+# REST API Server
+# ===================================
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# ===================================
+# Plotting and Visualization
+# ===================================
+matplotlib>=3.8.0
+
+# ===================================
+# Agent Framework (Optional - for future integration)
+# ===================================
+agent-framework --pre
+litellm
+python-dotenv
+requests
+
+# Core GUI Framework
+PyQt6>=6.4.0
+
+# Optional: For better performance
+Pillow>=9.0.0
+
+# Testing (optional)
+pytest>=7.0.0
+pytest-qt>=4.0.0
+# ===================================
+# Development Tools (Optional)
+# ===================================
+# pytest>=8.0.0
+# httpx>=0.26.0  # For testing FastAPI endpoints
