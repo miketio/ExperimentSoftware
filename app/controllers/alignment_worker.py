@@ -103,75 +103,121 @@ class AlignmentWorker(QThread):
     # Global Alignment - FIXED
     # =========================================================================
     
+    # In alignment_worker.py -> _run_global_alignment()
+
     def _run_global_alignment(self):
         corner_pairs = self.task_params['corner_pairs']
         search_radius = self.task_params['search_radius_um']
         step = self.task_params['step_um']
         
         print(f"[AlignmentWorker] Starting global alignment")
+        
+        # CHECK: Do we have Block 1 position?
+        if not self.runtime_layout.has_block_1_position():
+            self.error_occurred.emit(
+                "Block 1 Not Set",
+                "You must set Block 1 position before global calibration.\n\n"
+                "Go to: Calibration > Set Block 1 Position"
+            )
+            return
+        
+        # Get Block 1 measured position (this is our reference origin)
+        block1_Y_measured, block1_Z_measured = self.runtime_layout.get_block_1_position()
+        
+        # Get Block 1 design position
+        block1 = self.runtime_layout.get_block(1)
+        block1_Y_design = block1.design_position.u
+        block1_Z_design = block1.design_position.v
+        
+        print(f"[AlignmentWorker] Block 1 reference:")
+        print(f"  Design:   ({block1_Y_design:.3f}, {block1_Z_design:.3f}) µm")
+        print(f"  Measured: ({block1_Y_measured:.3f}, {block1_Z_measured:.3f}) µm")
+        print(f"  Offset:   ({block1_Y_measured - block1_Y_design:.3f}, "
+            f"{block1_Z_measured - block1_Z_design:.3f}) µm")
+        
         total_steps = len(corner_pairs)
         current_step = 0
         measurements = []
         
         for block_id, corner in corner_pairs:
+            # CHECK CANCELLATION BEFORE EACH BLOCK
             if self.is_cancelled():
+                print("[AlignmentWorker] Cancelled by user")
+                self.error_occurred.emit("Cancelled", "Alignment cancelled by user")
                 return
             
-            # FIX: Use Block object attribute access
             block = self.runtime_layout.get_block(block_id)
             block_size = self.runtime_layout.block_layout.block_size
-            if block is not None:
-                current_step += 1
-                
-                self.progress_updated.emit(
-                    current_step, total_steps,
-                    f"Searching Block {block_id} {corner}...", None
-                )
-                
-                # FIX: Access Block attributes properly
-                fiducial = block.get_fiducial(corner)
-                u_center = block.design_position.u
-                v_center = block.design_position.v
-                
-                # Convert to global design coords
-                u_bl = u_center - block_size / 2.0
-                v_bl = v_center - block_size / 2.0
-                u_global = u_bl + fiducial.u
-                v_global = v_bl + fiducial.v
-                
-                print(f"  Searching {corner} at ({u_global:.1f}, {v_global:.1f}) µm")
-                
-                result = self.searcher.search_for_fiducial(
-                    center_y_um=u_global,
-                    center_z_um=v_global,
-                    search_radius_um=search_radius,
-                    step_um=step,
-                    label=f"Block {block_id} {corner}",
-                    plot_progress=False
-                )
-                
-                if result is None:
-                    self.error_occurred.emit("Search Failed", 
-                                           f"Could not find Block {block_id} {corner}")
-                    return
-                
-                measurements.append({
-                    'block_id': block_id,
-                    'corner': corner,
-                    'stage_Y': result['stage_Y'],
-                    'stage_Z': result['stage_Z'],
-                    'confidence': result['confidence'],
-                    'verification_error_um': result.get('verification_error_um', 0)
-                })
-                
-                self.block_found.emit(
-                    block_id, corner,
-                    result['stage_Y'], result['stage_Z'],
-                    result.get('verification_error_um', 0),
-                    result.get('image')
-                )
-                
-                print(f"    ✓ Found at ({result['stage_Y']:.3f}, {result['stage_Z']:.3f}) µm")
+            
+            current_step += 1
+            
+            self.progress_updated.emit(
+                current_step, total_steps,
+                f"Searching Block {block_id} {corner}...", None
+            )
+            
+            # Get fiducial design position
+            fiducial = block.get_fiducial(corner)
+            u_center = block.design_position.u
+            v_center = block.design_position.v
+            
+            # Convert to global design coords
+            u_bl = u_center - block_size / 2.0
+            v_bl = v_center - block_size / 2.0
+            u_global_design = u_bl + fiducial.u
+            v_global_design = v_bl + fiducial.v
+            
+            # CORRECTED: Apply Block 1 offset to get predicted stage position
+            # Instead of searching at design position, search relative to Block 1 measurement
+            offset_Y = block1_Y_measured - block1_Y_design
+            offset_Z = block1_Z_measured - block1_Z_design
+            
+            search_center_Y = u_global_design + offset_Y
+            search_center_Z = v_global_design + offset_Z
+            
+            print(f"  Block {block_id} {corner}:")
+            print(f"    Design position: ({u_global_design:.3f}, {v_global_design:.3f}) µm")
+            print(f"    Search center (with Block 1 offset): ({search_center_Y:.3f}, {search_center_Z:.3f}) µm")
+            
+            result = self.searcher.search_for_fiducial(
+                center_y_um=search_center_Y,
+                center_z_um=search_center_Z,
+                search_radius_um=search_radius,
+                step_um=step,
+                label=f"Block {block_id} {corner}",
+                plot_progress=False,
+                cancel_callback=self.is_cancelled  # NEW
+            )
+            
+            if result is None:
+                self.error_occurred.emit("Search Failed", 
+                                    f"Could not find Block {block_id} {corner}")
+                return
+
+            measurements.append({
+                'block_id': block_id,
+                'corner': corner,
+                'stage_Y': result['stage_Y'],
+                'stage_Z': result['stage_Z'],
+                'confidence': result['confidence'],
+                'verification_error_um': result.get('verification_error_um', 0)
+            })
+            
+            self.block_found.emit(
+                block_id, corner,
+                result['stage_Y'], result['stage_Z'],
+                result.get('verification_error_um', 0),
+                result.get('image')
+            )
+            
+            print(f"    ✓ Found at ({result['stage_Y']:.3f}, {result['stage_Z']:.3f}) µm")
+            
+            # CHECK CANCELLATION AFTER SEARCH (which is long)
+            if self.is_cancelled():
+                print("[AlignmentWorker] Cancelled after search")
+                self.error_occurred.emit("Cancelled", "Alignment cancelled by user")
+                return
+            
         
         if self.is_cancelled():
             return
@@ -244,7 +290,8 @@ class AlignmentWorker(QThread):
                 search_radius_um=search_radius,
                 step_um=step,
                 label=f"Block {block_id} {corner}",
-                plot_progress=False
+                plot_progress=False,
+                cancel_callback=self.is_cancelled  # NEW
             )
             
             if result is None:

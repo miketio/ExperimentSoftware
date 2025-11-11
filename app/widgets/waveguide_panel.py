@@ -66,6 +66,16 @@ class WaveguidePanelWidget(QWidget):
         self.btn_goto_target.setEnabled(False)  # Disabled until block selected
         controls.addWidget(self.btn_goto_target)
         
+        self.btn_goto_beam = QPushButton("🎯 Move to Beam")
+        self.btn_goto_beam.setToolTip("Navigate to target, then offset to beam position")
+        self.btn_goto_beam.clicked.connect(self.navigate_to_beam)
+        self.btn_goto_beam.setStyleSheet(
+            "QPushButton { background-color: #FF9800; color: white; "
+            "font-weight: bold; padding: 8px; font-size: 11pt; }"
+        )
+        self.btn_goto_beam.setEnabled(False)
+        controls.addWidget(self.btn_goto_beam)
+
         # Cancel button
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.clicked.connect(self.navigation.cancel_navigation)
@@ -177,7 +187,7 @@ class WaveguidePanelWidget(QWidget):
             self.info_label.setStyleSheet("QLabel { font-style: italic; color: orange; font-weight: bold; }")
         
         self.btn_goto_target.setEnabled(True)
-        
+        self.btn_goto_beam.setEnabled(True)  # NEW
         try:
             block = runtime_layout.get_block(block_id)
             available_wgs = block.list_waveguides()
@@ -248,7 +258,7 @@ class WaveguidePanelWidget(QWidget):
                     status_item.setForeground(QColor(128, 128, 128))
             
             print(f"[WaveguidePanel] Table updated for Block {block_id}")
-            
+
         except Exception as e:
             self.info_label.setText(f"❌ Error loading block data: {e}")
             self.info_label.setStyleSheet("QLabel { font-style: italic; color: red; font-weight: bold; }")
@@ -336,3 +346,48 @@ class WaveguidePanelWidget(QWidget):
         """Refresh waveguide positions for selected block."""
         if self.state.navigation.current_block is not None:
             self._on_block_selected(self.state.navigation.current_block)
+
+    # Add navigation method:
+    def navigate_to_beam(self):
+        """Navigate to target, then apply beam offset."""
+        if self.state.navigation.current_block is None:
+            self.signals.error_occurred.emit(
+                "No Block Selected",
+                "Please select a block first"
+            )
+            return
+        
+        wg = self.wg_spin.value()
+        side = self.side_combo.currentText()
+        
+        # Get predicted grating position (centered)
+        block_id = self.state.navigation.current_block
+        autofocus = self.autofocus_check.isChecked()
+        
+        # Calculate beam offset in stage coordinates
+        center_x, center_y = 1024, 1024  # Image center
+        beam_x, beam_y = self.state.camera.beam_position_px
+        
+        offset_px_x = beam_x - center_x
+        offset_px_y = beam_y - center_y
+        
+        # Convert pixel offset to stage offset (µm)
+        um_per_pixel = self.state.camera.um_per_pixel
+        offset_stage_y = -1*offset_px_x * um_per_pixel  # X pixels → Y stage
+        offset_stage_z = offset_px_y * um_per_pixel  # Y pixels → Z stage
+        
+        print(f"[WaveguidePanel] Navigate to beam: WG{wg} {side}")
+        print(f"  Beam offset: ({offset_px_x}, {offset_px_y}) px")
+        print(f"  Stage offset: ({offset_stage_y:.3f}, {offset_stage_z:.3f}) µm")
+        
+        # Start navigation WITH beam offset
+        success = self.navigation.navigate_to_grating_with_beam_offset(
+            block_id=block_id,
+            waveguide=wg,
+            side=side,
+            beam_offset_um=(offset_stage_y, offset_stage_z),
+            autofocus=autofocus
+        )
+        
+        if not success:
+            return

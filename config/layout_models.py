@@ -549,15 +549,10 @@ class RuntimeLayout:
     # Measured values (filled during experiment)
     measured_global_transform: Optional[MeasuredTransform] = None
     measured_block_transforms: Dict[int, MeasuredTransform] = field(default_factory=dict)
-    
-    # Measurement log
     measurement_log: List[Dict[str, Any]] = field(default_factory=list)
-    
-    # NEW: Manual Block 1 stage position (for initial alignment)
     block_1_stage_position_um: Optional[Tuple[float, float]] = None
-
-    captured_fiducials: List[Dict[str, Any]] = field(default_factory=list)  # List of {block_id, corner, Y, Z}
-        
+    captured_fiducials: Dict[int, Dict[str, Tuple[float, float]]] = field(default_factory=dict)   
+    
     def set_block_1_position(self, y_um: float, z_um: float):
         """
         Set the stage position of Block 1 center.
@@ -591,43 +586,37 @@ class RuntimeLayout:
             )
         return self.block_1_stage_position_um
 
-
     def add_captured_fiducial(self, block_id: int, corner: str, Y: float, Z: float):
-        """Add a manually captured fiducial position."""
-        # Remove existing if duplicate
-        self.captured_fiducials = [
-            f for f in self.captured_fiducials 
-            if not (f['block_id'] == block_id and f['corner'] == corner)
-        ]
-        
-        self.captured_fiducials.append({
-            'block_id': block_id,
-            'corner': corner,
-            'Y': Y,
-            'Z': Z
-        })
-    
+        """Add manually captured fiducial."""
+        if block_id not in self.captured_fiducials:
+            self.captured_fiducials[block_id] = {}
+        self.captured_fiducials[block_id][corner] = (float(Y), float(Z))
+
     def remove_captured_fiducial(self, block_id: int, corner: str):
-        """Remove a captured fiducial."""
-        self.captured_fiducials = [
-            f for f in self.captured_fiducials 
-            if not (f['block_id'] == block_id and f['corner'] == corner)
-        ]
-    
+        """Remove captured fiducial."""
+        if block_id in self.captured_fiducials and corner in self.captured_fiducials[block_id]:
+            del self.captured_fiducials[block_id][corner]
+
     def has_captured_fiducial(self, block_id: int, corner: str) -> bool:
-        """Check if fiducial exists."""
-        return any(
-            f['block_id'] == block_id and f['corner'] == corner
-            for f in self.captured_fiducials
-        )
-    
-    def get_all_captured_fiducials(self) -> list:
-        """Get all captured fiducials."""
-        return self.captured_fiducials.copy()
-    
+        """Check if fiducial was captured."""
+        return block_id in self.captured_fiducials and corner in self.captured_fiducials[block_id]
+
+    def get_all_captured_fiducials(self) -> List[dict]:
+        """Get all manually captured fiducials as list."""
+        result = []
+        for block_id, corners in self.captured_fiducials.items():
+            for corner, (Y, Z) in corners.items():
+                result.append({
+                    'block_id': block_id,
+                    'corner': corner,
+                    'Y': Y,
+                    'Z': Z
+                })
+        return result
+
     def clear_all_captured_fiducials(self):
-        """Clear all captured fiducials."""
-        self.captured_fiducials = []
+        """Clear all manually captured fiducials."""
+        self.captured_fiducials.clear()
     
     @classmethod
     def from_json_file(cls, filepath: str) -> 'RuntimeLayout':
@@ -649,7 +638,6 @@ class RuntimeLayout:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'RuntimeLayout':
         """Parse from JSON dictionary."""
-        # Parse blocks
         blocks_data = data.get('blocks', {})
         blocks = {}
         for block_id_str, block_data in blocks_data.items():
@@ -660,12 +648,12 @@ class RuntimeLayout:
             }
             blocks[block_id] = Block.from_dict(block_id, clean_block_data)
         
-        # Metadata
         metadata = {
             k: v for k, v in data.items()
             if k not in ['design_name', 'version', 'coordinate_system',
                         'block_layout', 'blocks', 'simulation_ground_truth',
-                        'measured_calibration', 'block_1_stage_position_um']
+                        'measured_calibration', 'block_1_stage_position_um',
+                        'captured_fiducials']  # ✅ ADD
         }
         
         runtime = cls(
@@ -677,15 +665,22 @@ class RuntimeLayout:
             metadata=metadata
         )
         
-        # NEW: Load Block 1 position if present
+        # Load Block 1 position
         if 'block_1_stage_position_um' in data:
             pos = data['block_1_stage_position_um']
             runtime.block_1_stage_position_um = (float(pos[0]), float(pos[1]))
-            print(f"[RuntimeLayout] Loaded Block 1 position: Y={pos[0]:.3f}, Z={pos[1]:.3f} µm")
         
-        # Load measured calibration if present
+        # Load measured calibration
         if 'measured_calibration' in data:
             runtime._load_measured_calibration(data['measured_calibration'])
+        
+        # ✅ ADD: Load captured fiducials
+        if 'captured_fiducials' in data:
+            for block_id_str, corners in data['captured_fiducials'].items():
+                block_id = int(block_id_str)
+                runtime.captured_fiducials[block_id] = {
+                    corner: tuple(pos) for corner, pos in corners.items()
+                }
         
         return runtime
     
@@ -849,7 +844,7 @@ class RuntimeLayout:
     # ========================================================================
     # SERIALIZATION
     # ========================================================================
-        # UPDATE to_dict method - ADD THIS SECTION
+    # UPDATE to_dict method - ADD THIS SECTION
     def to_dict(self, include_design: bool = True) -> Dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
         result = {
@@ -858,7 +853,6 @@ class RuntimeLayout:
             'saved_timestamp': datetime.now().isoformat()
         }
         
-        # NEW: Add Block 1 position if set
         if self.block_1_stage_position_um is not None:
             result['block_1_stage_position_um'] = list(self.block_1_stage_position_um)
         
@@ -890,6 +884,13 @@ class RuntimeLayout:
         
         if measured_cal:
             result['measured_calibration'] = measured_cal
+        
+        # ✅ ADD: Save captured fiducials
+        if self.captured_fiducials:
+            result['captured_fiducials'] = {
+                str(block_id): {corner: list(pos) for corner, pos in corners.items()}
+                for block_id, corners in self.captured_fiducials.items()
+            }
         
         return result
     

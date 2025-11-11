@@ -66,8 +66,10 @@ class CameraState:
     show_crosshair: bool = True
     show_scale_bar: bool = True
     show_fourier: bool = False  # NEW: Fourier transform mode
-
-
+    beam_position_px: Tuple[int, int] = (512, 512)  # Beam location in pixels
+    show_beam_indicator: bool = True  # Show beam crosshair
+    um_per_pixel: float = 0  # Micrometers per pixel
+    
 class SystemState:
     """
     Centralized application state.

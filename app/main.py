@@ -150,6 +150,7 @@ def main():
     state.hardware_mode = HardwareMode.MOCK if selected_mode == "mock" else HardwareMode.REAL
     state.camera_connected = True
     state.stage_connected = True
+    state.camera.um_per_pixel = hw_manager.get_camera().um_per_pixel
     
     signals = SystemSignals()
     

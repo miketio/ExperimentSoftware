@@ -1,10 +1,78 @@
 {
   "design_name": "ArrayD_QuasiPeriodic_20Blocks",
   "version": "2.1",
-  "saved_timestamp": "2025-11-08T14:21:33.426056",
+  "saved_timestamp": "2025-11-11T16:43:18.789447",
   "source_design_file": "config/mock_layout.json",
   "block_1_stage_position_um": [
-    320.0,
-    50.0
-  ]
+    300.0,
+    200.0
+  ],
+  "measured_calibration": {
+    "global_transform": {
+      "rotation_deg": 3.69970413360236,
+      "translation_um": [
+        298.43209513329856,
+        200.02806434952055
+      ],
+      "timestamp": "2025-11-11T16:19:45.113001",
+      "calibration_error_um": 0.7649078325220243,
+      "num_points": 2
+    },
+    "block_transforms": {
+      "15": {
+        "rotation_deg": 0.0,
+        "translation_um": [
+          1431.2,
+          -435.2
+        ],
+        "timestamp": "2025-11-11T16:21:02.286681",
+        "calibration_error_um": 0.0,
+        "num_points": 2
+      }
+    },
+    "measurement_log": [
+      {
+        "timestamp": "2025-11-11T16:19:45.112725",
+        "action": "global_calibration",
+        "rotation_deg": 3.69970413360236,
+        "translation_um": [
+          298.43209513329856,
+          200.02806434952055
+        ],
+        "calibration_error_um": 0.7649078325220243
+      },
+      {
+        "timestamp": "2025-11-11T16:19:45.113006",
+        "action": "global_calibration",
+        "rotation_deg": 3.69970413360236,
+        "translation_um": [
+          298.43209513329856,
+          200.02806434952055
+        ],
+        "calibration_error_um": 0.7649078325220243
+      },
+      {
+        "timestamp": "2025-11-11T16:21:02.286671",
+        "action": "block_calibration",
+        "block_id": 15,
+        "rotation_deg": 0.0,
+        "translation_um": [
+          1431.2,
+          -435.2
+        ],
+        "calibration_error_um": 0.0
+      },
+      {
+        "timestamp": "2025-11-11T16:21:02.286683",
+        "action": "block_calibration",
+        "block_id": 15,
+        "rotation_deg": 0.0,
+        "translation_um": [
+          1431.2,
+          -435.2
+        ],
+        "calibration_error_um": 0.0
+      }
+    ]
+  }
 }

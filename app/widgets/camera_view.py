@@ -254,17 +254,45 @@ class CameraViewWidget(QWidget):
         w = pixmap.width()
         h = pixmap.height()
         
-        # Adjust for colorbar width if present
+        # Adjust for colorbar if present
         if self.SHOW_COLORBAR:
             display_w = int(w * (1 - self.COLORBAR_WIDTH / (w + self.COLORBAR_WIDTH)))
         else:
             display_w = w
         
+        # === NEW: BEAM INDICATOR (Red Circle) ===
+        if self.state.camera.show_beam_indicator:
+            beam_x, beam_y = self.state.camera.beam_position_px
+            
+            # Scale beam position to display size (if image is scaled)
+            scale_x = display_w / 2048  # Adjust based on sensor size
+            scale_y = h / 2048
+            
+            beam_x_scaled = int(beam_x * scale_x)
+            beam_y_scaled = int(beam_y * scale_y)
+            
+            # Draw red circle (beam spot)
+            painter.setPen(QPen(QColor(255, 0, 0), 3))
+            painter.drawEllipse(beam_x_scaled - 30, beam_y_scaled - 30, 60, 60)
+            
+            # Draw small red crosshair inside
+            painter.setPen(QPen(QColor(255, 0, 0), 2))
+            painter.drawLine(beam_x_scaled - 15, beam_y_scaled, beam_x_scaled + 15, beam_y_scaled)
+            painter.drawLine(beam_x_scaled, beam_y_scaled - 15, beam_x_scaled, beam_y_scaled + 15)
+            
+            # Label
+            painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            painter.setPen(QColor(255, 0, 0))
+            painter.drawText(beam_x_scaled + 40, beam_y_scaled, "BEAM")
+        
+        # === Original center crosshair (optional - can remove if confusing) ===
         if self.state.camera.show_crosshair:
             painter.setPen(QPen(QColor(0, 255, 0), 3))
             cx, cy = display_w // 2, h // 2
             painter.drawLine(cx - 50, cy, cx + 50, cy)
             painter.drawLine(cx, cy - 50, cx, cy + 50)
+            # Make it dashed to distinguish from beam
+            painter.setPen(QPen(QColor(0, 255, 0), 2, Qt.PenStyle.DashLine))
             painter.drawEllipse(cx - 25, cy - 25, 50, 50)
         
         if self.state.camera.show_scale_bar:

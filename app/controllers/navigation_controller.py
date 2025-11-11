@@ -8,7 +8,7 @@ Uses HierarchicalAlignment for position prediction.
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 from app.system_state import SystemState
 from app.signals import SystemSignals
@@ -29,7 +29,8 @@ class NavigationWorker(QThread):
         waveguide: int,
         side: str,
         autofocus: bool = False,
-        autofocus_controller = None
+        autofocus_controller = None,
+        beam_offset_um: Optional[Tuple[float, float]] = None
     ):
         super().__init__()
         self.stage = stage
@@ -41,7 +42,8 @@ class NavigationWorker(QThread):
         self.autofocus_controller = autofocus_controller
         
         self.cancelled = False
-    
+        self.beam_offset_um = beam_offset_um
+
     def cancel(self):
         """Cancel navigation."""
         self.cancelled = True
@@ -115,7 +117,29 @@ class NavigationWorker(QThread):
             
             # Small settle time
             time.sleep(0.1)
-            
+
+            # Step 2.5: APPLY BEAM OFFSET (NEW!)
+            if self.beam_offset_um is not None:
+                offset_y, offset_z = self.beam_offset_um
+                
+                self.progress.emit(
+                    f"Applying beam offset: ΔY={offset_y:.3f}µm, ΔZ={offset_z:.3f}µm..."
+                )
+                
+                print(f"[NavigationWorker] Applying beam offset: "
+                      f"Y+={offset_y:.3f}µm, Z+={offset_z:.3f}µm")
+                
+                # Relative move to shift from center to beam
+                self.stage.move_rel('y', offset_y)
+                if self.cancelled:
+                    return
+                
+                self.stage.move_rel('z', offset_z)
+                if self.cancelled:
+                    return
+                
+                time.sleep(0.1)  # Settle
+                
             # Step 3: Optional autofocus
             if self.autofocus and self.autofocus_controller:
                 if self.cancelled:
@@ -337,3 +361,60 @@ class NavigationController(QObject):
         if self.worker:
             self.worker.deleteLater()
             self.worker = None
+
+    def navigate_to_grating_with_beam_offset(
+        self,
+        block_id: int,
+        waveguide: int,
+        side: str,
+        beam_offset_um: Tuple[float, float],
+        autofocus: bool = False
+    ) -> bool:
+        """
+        Navigate to grating, then apply beam offset.
+        
+        Args:
+            beam_offset_um: (Y_offset, Z_offset) in µm to shift from center to beam
+        """
+        print(f"[NavigationController] Navigate with beam offset: "
+            f"Block {block_id} WG{waveguide} {side} + offset {beam_offset_um}")
+        
+        # Same preconditions as navigate_to_grating
+        if not self.state.global_calibrated:
+            self.signals.error_occurred.emit(
+                "Not Calibrated",
+                "Global calibration required before navigation."
+            )
+            return False
+        
+        # Create worker WITH beam offset
+        self.worker = NavigationWorker(
+            stage=self.stage,
+            alignment_system=self.alignment,
+            block_id=block_id,
+            waveguide=waveguide,
+            side=side,
+            autofocus=autofocus,
+            autofocus_controller=self.autofocus,
+            beam_offset_um=beam_offset_um  # NEW parameter
+        )
+        
+        # Connect signals
+        self.worker.progress.connect(
+            lambda msg: self.signals.status_message.emit(msg)
+        )
+        self.worker.complete.connect(self._on_complete)
+        self.worker.error.connect(
+            lambda e: self._on_error(e)
+        )
+        
+        # Emit started signal
+        self.signals.navigation_started.emit(block_id, waveguide, side)
+        self.signals.busy_started.emit(f"Navigation to Block {block_id} WG{waveguide} {side}")
+        
+        print(f"[NavigationController] Starting worker thread")
+        
+        # Start movement
+        self.worker.start()
+        
+        return True

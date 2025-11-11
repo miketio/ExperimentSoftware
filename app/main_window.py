@@ -134,11 +134,20 @@ class MainWindow(QMainWindow):
         )
         control_tabs.addTab(self.stage_control, "Stage Control")
 
-        # Alignment panel tab
-        self.alignment_panel = AlignmentPanelWidget(
+        # Automated alignment tab (NEW)
+        from app.widgets.automated_alignment_panel import AutomatedAlignmentPanel
+        self.automated_alignment = AutomatedAlignmentPanel(
             self.state, self.signals, self.alignment_controller
         )
-        control_tabs.addTab(self.alignment_panel, "Alignment")
+        control_tabs.addTab(self.automated_alignment, "Automated Alignment")
+
+        # Manual alignment tab (NEW)
+        from app.widgets.manual_calibration_panel import ManualCalibrationPanel
+        self.manual_alignment = ManualCalibrationPanel(
+            self.state, self.signals, self.runtime_layout, 
+            self.alignment_controller
+        )
+        control_tabs.addTab(self.manual_alignment, "Manual Calibration")
 
         # Setup panel tab (NEW)
         from app.widgets.setup_panel import SetupPanelWidget
@@ -318,7 +327,13 @@ class MainWindow(QMainWindow):
         # autofocus_action.setShortcut("Ctrl+Shift+F")
         # autofocus_action.triggered.connect(self._run_autofocus)
         # tools_menu.addAction(autofocus_action)
-        
+        tools_menu.addSeparator()
+
+        set_beam_action = QAction("Set &Beam Position...", self)
+        set_beam_action.setShortcut("Ctrl+Shift+B")
+        set_beam_action.triggered.connect(self._set_beam_position)
+        tools_menu.addAction(set_beam_action)
+
         # Help menu
         help_menu = menubar.addMenu("&Help")
         
@@ -338,7 +353,22 @@ class MainWindow(QMainWindow):
         
         # Block selection
         self.signals.block_selected.connect(self._on_block_selected)
-    
+        
+        # Update both alignment tabs when calibration completes
+        self.signals.global_alignment_complete.connect(
+            self.automated_alignment._update_global_status
+        )
+        self.signals.global_alignment_complete.connect(
+            self.manual_alignment._update_calibration_status
+        )
+
+        self.signals.block_alignment_complete.connect(
+            lambda bid: self.automated_alignment._update_block_status(bid)
+        )
+        self.signals.block_alignment_complete.connect(
+            self.manual_alignment._update_calibration_status
+        )
+
     def _start_camera_stream(self):
         """Start camera streaming thread."""
         if self.camera is None:
@@ -685,3 +715,20 @@ class MainWindow(QMainWindow):
         self.position_timer.stop()
         
         print("[MainWindow] Cleanup complete")
+    
+    def _set_beam_position(self):
+        """Open beam position dialog."""
+        from app.widgets.beam_position_dialog import BeamPositionDialog
+        
+        dialog = BeamPositionDialog(
+            state=self.state,
+            parent=self
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Update overlay
+            self.camera_view.update_overlay_settings()
+            self.signals.status_message.emit(
+                f"Beam position set to ({self.state.camera.beam_position_px[0]}, "
+                f"{self.state.camera.beam_position_px[1]}) px"
+            )
