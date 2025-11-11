@@ -50,12 +50,6 @@ class WaveguidePanelWidget(QWidget):
         self.side_combo.currentTextChanged.connect(self._on_side_changed)
         controls.addWidget(self.side_combo)
         
-        # Autofocus option
-        self.autofocus_check = QCheckBox("Autofocus")
-        self.autofocus_check.setChecked(self.state.autofocus_config.get('auto_after_nav', True))
-        self.autofocus_check.toggled.connect(self._on_autofocus_toggled)
-        controls.addWidget(self.autofocus_check)
-        
         # Go to target button
         self.btn_goto_target = QPushButton("🎯 Go to Target")
         self.btn_goto_target.clicked.connect(self.navigate_to_target)
@@ -205,7 +199,7 @@ class WaveguidePanelWidget(QWidget):
                     item.setText(f"{wg.v_center:.2f}")
                     
                     # Check which gratings exist for this waveguide
-                    grating_sides = ['left', 'center', 'right']
+                    grating_sides = ['left', 'right']
                     for col, side in enumerate(grating_sides, start=2):
                         btn = self.table.cellWidget(i, col)
                         if btn:
@@ -276,7 +270,7 @@ class WaveguidePanelWidget(QWidget):
             return
         
         block_id = self.state.navigation.current_block
-        autofocus = self.autofocus_check.isChecked()
+        # autofocus = self.autofocus_check.isChecked()
         
         print(f"[WaveguidePanel] Navigating to Block {block_id} WG{wg_num} {side}")
         
@@ -284,8 +278,7 @@ class WaveguidePanelWidget(QWidget):
         success = self.navigation.navigate_to_grating(
             block_id=block_id,
             waveguide=wg_num,
-            side=side,
-            autofocus=autofocus
+            side=side
         )
         
         if not success:
@@ -362,7 +355,7 @@ class WaveguidePanelWidget(QWidget):
         
         # Get predicted grating position (centered)
         block_id = self.state.navigation.current_block
-        autofocus = self.autofocus_check.isChecked()
+        # autofocus = self.autofocus_check.isChecked()
         
         # Calculate beam offset in stage coordinates
         center_x, center_y = 1024, 1024  # Image center
@@ -385,8 +378,7 @@ class WaveguidePanelWidget(QWidget):
             block_id=block_id,
             waveguide=wg,
             side=side,
-            beam_offset_um=(offset_stage_y, offset_stage_z),
-            autofocus=autofocus
+            beam_offset_um=(offset_stage_y, offset_stage_z)
         )
         
         if not success:

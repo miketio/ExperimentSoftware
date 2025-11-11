@@ -1,11 +1,9 @@
-# app/controllers/alignment_worker.py
+# app/controllers/alignment_worker.py - UPDATED
 """
-Alignment Worker Thread - FIXED VERSION
+Alignment Worker Thread - WITH FIDUCIAL SYNC
 
-Fixes:
-1. RuntimeLayout.get_block() returns Block object, not dict - use attribute access
-2. Remove non-existent .lock usage
-3. Proper Block object attribute access throughout
+Changes:
+1. Automatically add captured fiducials to RuntimeLayout for manual panel display
 """
 
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
@@ -43,8 +41,8 @@ class AlignmentWorker(QThread):
         self.task_params = {}
     
     def configure_global_alignment(self, corner_pairs = [
-                        (1, 'top_left'),      # Block 1
-                        (20, 'bottom_right')  # Block 20
+                        (1, 'top_left'),      
+                        (20, 'bottom_right')  
                     ], search_radius_um=100.0, step_um=20.0):
         self.task = 'global'
         self.task_params = {
@@ -99,12 +97,6 @@ class AlignmentWorker(QThread):
         finally:
             print("[AlignmentWorker] Thread finished")
     
-    # =========================================================================
-    # Global Alignment - FIXED
-    # =========================================================================
-    
-    # In alignment_worker.py -> _run_global_alignment()
-
     def _run_global_alignment(self):
         corner_pairs = self.task_params['corner_pairs']
         search_radius = self.task_params['search_radius_um']
@@ -112,7 +104,6 @@ class AlignmentWorker(QThread):
         
         print(f"[AlignmentWorker] Starting global alignment")
         
-        # CHECK: Do we have Block 1 position?
         if not self.runtime_layout.has_block_1_position():
             self.error_occurred.emit(
                 "Block 1 Not Set",
@@ -121,10 +112,7 @@ class AlignmentWorker(QThread):
             )
             return
         
-        # Get Block 1 measured position (this is our reference origin)
         block1_Y_measured, block1_Z_measured = self.runtime_layout.get_block_1_position()
-        
-        # Get Block 1 design position
         block1 = self.runtime_layout.get_block(1)
         block1_Y_design = block1.design_position.u
         block1_Z_design = block1.design_position.v
@@ -132,15 +120,12 @@ class AlignmentWorker(QThread):
         print(f"[AlignmentWorker] Block 1 reference:")
         print(f"  Design:   ({block1_Y_design:.3f}, {block1_Z_design:.3f}) µm")
         print(f"  Measured: ({block1_Y_measured:.3f}, {block1_Z_measured:.3f}) µm")
-        print(f"  Offset:   ({block1_Y_measured - block1_Y_design:.3f}, "
-            f"{block1_Z_measured - block1_Z_design:.3f}) µm")
         
         total_steps = len(corner_pairs)
         current_step = 0
         measurements = []
         
         for block_id, corner in corner_pairs:
-            # CHECK CANCELLATION BEFORE EACH BLOCK
             if self.is_cancelled():
                 print("[AlignmentWorker] Cancelled by user")
                 self.error_occurred.emit("Cancelled", "Alignment cancelled by user")
@@ -156,28 +141,20 @@ class AlignmentWorker(QThread):
                 f"Searching Block {block_id} {corner}...", None
             )
             
-            # Get fiducial design position
             fiducial = block.get_fiducial(corner)
             u_center = block.design_position.u
             v_center = block.design_position.v
             
-            # Convert to global design coords
             u_bl = u_center - block_size / 2.0
             v_bl = v_center - block_size / 2.0
             u_global_design = u_bl + fiducial.u
             v_global_design = v_bl + fiducial.v
             
-            # CORRECTED: Apply Block 1 offset to get predicted stage position
-            # Instead of searching at design position, search relative to Block 1 measurement
             offset_Y = block1_Y_measured - block1_Y_design
             offset_Z = block1_Z_measured - block1_Z_design
             
             search_center_Y = u_global_design + offset_Y
             search_center_Z = v_global_design + offset_Z
-            
-            print(f"  Block {block_id} {corner}:")
-            print(f"    Design position: ({u_global_design:.3f}, {v_global_design:.3f}) µm")
-            print(f"    Search center (with Block 1 offset): ({search_center_Y:.3f}, {search_center_Z:.3f}) µm")
             
             result = self.searcher.search_for_fiducial(
                 center_y_um=search_center_Y,
@@ -186,7 +163,7 @@ class AlignmentWorker(QThread):
                 step_um=step,
                 label=f"Block {block_id} {corner}",
                 plot_progress=False,
-                cancel_callback=self.is_cancelled  # NEW
+                cancel_callback=self.is_cancelled
             )
             
             if result is None:
@@ -203,6 +180,13 @@ class AlignmentWorker(QThread):
                 'verification_error_um': result.get('verification_error_um', 0)
             })
             
+            # ✅ NEW: Also add to RuntimeLayout's captured fiducials
+            self.runtime_layout.add_captured_fiducial(
+                block_id, corner, 
+                result['stage_Y'], 
+                result['stage_Z']
+            )
+            
             self.block_found.emit(
                 block_id, corner,
                 result['stage_Y'], result['stage_Z'],
@@ -212,12 +196,10 @@ class AlignmentWorker(QThread):
             
             print(f"    ✓ Found at ({result['stage_Y']:.3f}, {result['stage_Z']:.3f}) µm")
             
-            # CHECK CANCELLATION AFTER SEARCH (which is long)
             if self.is_cancelled():
                 print("[AlignmentWorker] Cancelled after search")
                 self.error_occurred.emit("Cancelled", "Alignment cancelled by user")
                 return
-            
         
         if self.is_cancelled():
             return
@@ -232,7 +214,6 @@ class AlignmentWorker(QThread):
         print(f"    Rotation: {calib_result['rotation_deg']:.6f}°")
         print(f"    Translation: {calib_result['translation_um']} µm")
         
-        # FIX: RuntimeLayout has no .lock - direct call
         self.runtime_layout.set_global_calibration(
             rotation=calib_result['rotation_deg'],
             translation=calib_result['translation_um'],
@@ -246,10 +227,6 @@ class AlignmentWorker(QThread):
             'calibration': calib_result
         })
     
-    # =========================================================================
-    # Block Alignment - FIXED
-    # =========================================================================
-    
     def _run_block_alignment(self):
         block_id = self.task_params['block_id']
         corners = self.task_params['corners']
@@ -258,7 +235,6 @@ class AlignmentWorker(QThread):
         
         print(f"[AlignmentWorker] Starting block {block_id} alignment")
         
-        # FIX: Check calibration via RuntimeLayout method
         if not self.runtime_layout.is_globally_calibrated():
             self.error_occurred.emit("Not Ready", 
                                    "Global calibration required before block alignment")
@@ -276,7 +252,6 @@ class AlignmentWorker(QThread):
             self.progress_updated.emit(current_step, total_steps,
                                       f"Searching Block {block_id} {corner}...", None)
             
-            # Predict position using alignment system
             try:
                 pred_Y, pred_Z = self.alignment.get_fiducial_stage_position(block_id, corner)
                 print(f"  Predicted {corner}: ({pred_Y:.3f}, {pred_Z:.3f}) µm")
@@ -291,7 +266,7 @@ class AlignmentWorker(QThread):
                 step_um=step,
                 label=f"Block {block_id} {corner}",
                 plot_progress=False,
-                cancel_callback=self.is_cancelled  # NEW
+                cancel_callback=self.is_cancelled
             )
             
             if result is None:
@@ -301,12 +276,18 @@ class AlignmentWorker(QThread):
             
             pred_error = np.hypot(result['stage_Y'] - pred_Y, result['stage_Z'] - pred_Z)
             
-            # FIX: Only include keys that calibrate_block expects
             measurements.append({
                 'corner': corner,
                 'stage_Y': result['stage_Y'],
                 'stage_Z': result['stage_Z']
             })
+            
+            # ✅ NEW: Also add to RuntimeLayout's captured fiducials
+            self.runtime_layout.add_captured_fiducial(
+                block_id, corner,
+                result['stage_Y'],
+                result['stage_Z']
+            )
             
             self.block_found.emit(block_id, corner,
                                 result['stage_Y'], result['stage_Z'],
@@ -327,7 +308,6 @@ class AlignmentWorker(QThread):
         print(f"  ✓ Block {block_id} calibration complete:")
         print(f"    Mean error: {calib_result['mean_error_um']:.6f} µm")
         
-        # FIX: Direct call, no lock
         self.runtime_layout.set_block_calibration(
             block_id=block_id,
             rotation=calib_result['rotation_deg'],

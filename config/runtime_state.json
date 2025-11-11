@@ -1,7 +1,7 @@
 {
   "design_name": "ArrayD_QuasiPeriodic_20Blocks",
   "version": "2.1",
-  "saved_timestamp": "2025-11-11T16:43:18.789447",
+  "saved_timestamp": "2025-11-11T17:56:36.668780",
   "source_design_file": "config/mock_layout.json",
   "block_1_stage_position_um": [
     300.0,
@@ -14,7 +14,7 @@
         298.43209513329856,
         200.02806434952055
       ],
-      "timestamp": "2025-11-11T16:19:45.113001",
+      "timestamp": "2025-11-11T17:54:56.760938",
       "calibration_error_um": 0.7649078325220243,
       "num_points": 2
     },
@@ -27,6 +27,16 @@
         ],
         "timestamp": "2025-11-11T16:21:02.286681",
         "calibration_error_um": 0.0,
+        "num_points": 2
+      },
+      "1": {
+        "rotation_deg": 4.258846122170347,
+        "translation_um": [
+          206.99498579279623,
+          93.86713510089066
+        ],
+        "timestamp": "2025-11-11T17:56:36.668550",
+        "calibration_error_um": 1.0461249495795448,
         "num_points": 2
       }
     },
@@ -72,6 +82,48 @@
           -435.2
         ],
         "calibration_error_um": 0.0
+      },
+      {
+        "timestamp": "2025-11-11T17:54:56.760514",
+        "action": "global_calibration",
+        "rotation_deg": 3.69970413360236,
+        "translation_um": [
+          298.43209513329856,
+          200.02806434952055
+        ],
+        "calibration_error_um": 0.7649078325220243
+      },
+      {
+        "timestamp": "2025-11-11T17:54:56.760941",
+        "action": "global_calibration",
+        "rotation_deg": 3.69970413360236,
+        "translation_um": [
+          298.43209513329856,
+          200.02806434952055
+        ],
+        "calibration_error_um": 0.7649078325220243
+      },
+      {
+        "timestamp": "2025-11-11T17:56:36.668539",
+        "action": "block_calibration",
+        "block_id": 1,
+        "rotation_deg": 4.258846122170347,
+        "translation_um": [
+          206.99498579279623,
+          93.86713510089066
+        ],
+        "calibration_error_um": 1.0461249495795448
+      },
+      {
+        "timestamp": "2025-11-11T17:56:36.668551",
+        "action": "block_calibration",
+        "block_id": 1,
+        "rotation_deg": 4.258846122170347,
+        "translation_um": [
+          206.99498579279623,
+          93.86713510089066
+        ],
+        "calibration_error_um": 1.0461249495795448
       }
     ]
   }

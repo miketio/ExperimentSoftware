@@ -27,7 +27,10 @@ class CameraViewWidget(QWidget):
         self.current_frame = None
         self.current_stats = {}
         self.camera_thread = None
-        
+
+        # NEW: Zoom center mode
+        self.zoom_to_beam = False  # False = zoom to center, True = zoom to beam
+
         self._init_ui()
         self._connect_signals()
     
@@ -62,6 +65,27 @@ class CameraViewWidget(QWidget):
         self.zoom_combo.setCurrentText('Fit')
         self.zoom_combo.currentTextChanged.connect(self._on_zoom_changed)
         row1.addWidget(self.zoom_combo)
+        
+        # NEW: Zoom mode selector
+        self.zoom_mode_combo = QComboBox()
+        self.zoom_mode_combo.addItems(['Zoom to Center', 'Zoom to Beam'])
+        self.zoom_mode_combo.currentTextChanged.connect(self._on_zoom_mode_changed)
+        row1.addWidget(self.zoom_mode_combo)
+        
+        # NEW: Beam toggle button
+        self.btn_beam_toggle = QPushButton("🔴 Beam ON")
+        self.btn_beam_toggle.setCheckable(True)
+        self.btn_beam_toggle.setChecked(True)
+        self.btn_beam_toggle.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }"
+            "QPushButton:checked { background-color: #4CAF50; }"
+            "QPushButton:!checked { background-color: #F44336; }"
+        )
+        self.btn_beam_toggle.clicked.connect(self._toggle_beam)
+        row1.addWidget(self.btn_beam_toggle)
+        
+        row1.addStretch()
+        layout.addLayout(row1)
         row1.addStretch()
         layout.addLayout(row1)
         
@@ -372,3 +396,21 @@ class CameraViewWidget(QWidget):
                 self.camera_thread.camera.set_roi(0, 0, sensor_w, sensor_h)
             except Exception as e:
                 print(f"[CameraView] Failed to reset ROI: {e}")
+
+    def _on_zoom_mode_changed(self, mode_text: str):
+        """Change zoom center mode."""
+        self.zoom_to_beam = (mode_text == 'Zoom to Beam')
+        print(f"[CameraView] Zoom mode: {'beam' if self.zoom_to_beam else 'center'}")
+
+    def _toggle_beam(self, checked: bool):
+        """Toggle beam visibility."""
+        self.state.camera.show_beam_indicator = checked
+        
+        if checked:
+            self.btn_beam_toggle.setText("🔴 Beam ON")
+        else:
+            self.btn_beam_toggle.setText("⚪ Beam OFF")
+        
+        # Force redraw
+        if self.current_frame is not None:
+            self.update_frame(self.current_frame)
