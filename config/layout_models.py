@@ -553,6 +553,82 @@ class RuntimeLayout:
     # Measurement log
     measurement_log: List[Dict[str, Any]] = field(default_factory=list)
     
+    # NEW: Manual Block 1 stage position (for initial alignment)
+    block_1_stage_position_um: Optional[Tuple[float, float]] = None
+
+    captured_fiducials: List[Dict[str, Any]] = field(default_factory=list)  # List of {block_id, corner, Y, Z}
+        
+    def set_block_1_position(self, y_um: float, z_um: float):
+        """
+        Set the stage position of Block 1 center.
+        
+        This is used to initialize the first search when no calibration exists.
+        
+        Args:
+            y_um: Y stage position in micrometers
+            z_um: Z stage position in micrometers
+        """
+        self.block_1_stage_position_um = (float(y_um), float(z_um))
+        print(f"[RuntimeLayout] Block 1 position set to: Y={y_um:.3f}, Z={z_um:.3f} µm")
+    
+    def has_block_1_position(self) -> bool:
+        """Check if Block 1 position has been set."""
+        return self.block_1_stage_position_um is not None
+    
+    def get_block_1_position(self) -> Tuple[float, float]:
+        """
+        Get Block 1 stage position.
+        
+        Returns:
+            (Y, Z) in micrometers
+        
+        Raises:
+            RuntimeError: If position not set
+        """
+        if not self.has_block_1_position():
+            raise RuntimeError(
+                "Block 1 position not set. Use Layout Wizard to set initial position."
+            )
+        return self.block_1_stage_position_um
+
+
+    def add_captured_fiducial(self, block_id: int, corner: str, Y: float, Z: float):
+        """Add a manually captured fiducial position."""
+        # Remove existing if duplicate
+        self.captured_fiducials = [
+            f for f in self.captured_fiducials 
+            if not (f['block_id'] == block_id and f['corner'] == corner)
+        ]
+        
+        self.captured_fiducials.append({
+            'block_id': block_id,
+            'corner': corner,
+            'Y': Y,
+            'Z': Z
+        })
+    
+    def remove_captured_fiducial(self, block_id: int, corner: str):
+        """Remove a captured fiducial."""
+        self.captured_fiducials = [
+            f for f in self.captured_fiducials 
+            if not (f['block_id'] == block_id and f['corner'] == corner)
+        ]
+    
+    def has_captured_fiducial(self, block_id: int, corner: str) -> bool:
+        """Check if fiducial exists."""
+        return any(
+            f['block_id'] == block_id and f['corner'] == corner
+            for f in self.captured_fiducials
+        )
+    
+    def get_all_captured_fiducials(self) -> list:
+        """Get all captured fiducials."""
+        return self.captured_fiducials.copy()
+    
+    def clear_all_captured_fiducials(self):
+        """Clear all captured fiducials."""
+        self.captured_fiducials = []
+    
     @classmethod
     def from_json_file(cls, filepath: str) -> 'RuntimeLayout':
         """
@@ -569,14 +645,11 @@ class RuntimeLayout:
         
         return cls.from_dict(data)
     
+    # UPDATE from_dict method - ADD THIS SECTION
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'RuntimeLayout':
-        """
-        Parse from JSON dictionary.
-        
-        IGNORES 'simulation_ground_truth' section - runtime doesn't see it.
-        """
-        # Parse blocks (without fabrication_error)
+        """Parse from JSON dictionary."""
+        # Parse blocks
         blocks_data = data.get('blocks', {})
         blocks = {}
         for block_id_str, block_data in blocks_data.items():
@@ -587,12 +660,12 @@ class RuntimeLayout:
             }
             blocks[block_id] = Block.from_dict(block_id, clean_block_data)
         
-        # Metadata (excluding ground truth)
+        # Metadata
         metadata = {
             k: v for k, v in data.items()
             if k not in ['design_name', 'version', 'coordinate_system',
                         'block_layout', 'blocks', 'simulation_ground_truth',
-                        'measured_calibration']
+                        'measured_calibration', 'block_1_stage_position_um']
         }
         
         runtime = cls(
@@ -604,7 +677,13 @@ class RuntimeLayout:
             metadata=metadata
         )
         
-        # Load measured calibration if present (from saved results)
+        # NEW: Load Block 1 position if present
+        if 'block_1_stage_position_um' in data:
+            pos = data['block_1_stage_position_um']
+            runtime.block_1_stage_position_um = (float(pos[0]), float(pos[1]))
+            print(f"[RuntimeLayout] Loaded Block 1 position: Y={pos[0]:.3f}, Z={pos[1]:.3f} µm")
+        
+        # Load measured calibration if present
         if 'measured_calibration' in data:
             runtime._load_measured_calibration(data['measured_calibration'])
         
@@ -770,23 +849,18 @@ class RuntimeLayout:
     # ========================================================================
     # SERIALIZATION
     # ========================================================================
-    
+        # UPDATE to_dict method - ADD THIS SECTION
     def to_dict(self, include_design: bool = True) -> Dict[str, Any]:
-        """
-        Convert to JSON-serializable dictionary.
-        
-        Args:
-            include_design: If True, include full design data.
-                          If False, only include measured calibration.
-        
-        Returns:
-            Dictionary ready for json.dump()
-        """
+        """Convert to JSON-serializable dictionary."""
         result = {
             'design_name': self.design_name,
             'version': self.version,
             'saved_timestamp': datetime.now().isoformat()
         }
+        
+        # NEW: Add Block 1 position if set
+        if self.block_1_stage_position_um is not None:
+            result['block_1_stage_position_um'] = list(self.block_1_stage_position_um)
         
         if include_design:
             result.update({
@@ -799,7 +873,7 @@ class RuntimeLayout:
             })
             result.update(self.metadata)
         
-        # Always include measured calibration
+        # Measured calibration
         measured_cal = {}
         
         if self.measured_global_transform:
@@ -819,31 +893,53 @@ class RuntimeLayout:
         
         return result
     
+    # config/layout_models.py - UPDATE save_to_json method
+
     def save_to_json(self, filepath: str, include_design: bool = True, indent: int = 2):
         """
         Save runtime layout to JSON file.
         
-        Args:
-            filepath: Output file path
-            include_design: If True, save full design + measurements.
-                          If False, only save measurements.
-            indent: JSON indentation (default: 2)
-        
-        Example:
-            # Save everything
-            >>> runtime.save_to_json("results/calibration_full.json")
-            
-            # Save only measurements (reference design by name)
-            >>> runtime.save_to_json("results/calibration_data_only.json", 
-            ...                      include_design=False)
+        CRITICAL: When saving RuntimeLayout, we save ONLY measurements,
+        NOT the full design (to avoid overwriting source).
         """
         path = Path(filepath)
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        data = self.to_dict(include_design=include_design)
+        # RuntimeLayout should ALWAYS save measurements only
+        # Design stays in the source file
+        data = {
+            'design_name': self.design_name,
+            'version': self.version,
+            'saved_timestamp': datetime.now().isoformat(),
+            'source_design_file': self.metadata.get('source_file', 'unknown')
+        }
+        
+        # Block 1 position
+        if self.block_1_stage_position_um is not None:
+            data['block_1_stage_position_um'] = list(self.block_1_stage_position_um)
+        
+        # Measured calibration
+        measured_cal = {}
+        
+        if self.measured_global_transform:
+            measured_cal['global_transform'] = self.measured_global_transform.to_dict()
+        
+        if self.measured_block_transforms:
+            measured_cal['block_transforms'] = {
+                str(block_id): trans.to_dict()
+                for block_id, trans in self.measured_block_transforms.items()
+            }
+        
+        if self.measurement_log:
+            measured_cal['measurement_log'] = self.measurement_log
+        
+        if measured_cal:
+            data['measured_calibration'] = measured_cal
         
         with open(path, 'w') as f:
             json.dump(data, f, indent=indent)
+        
+        print(f"[RuntimeLayout] Saved runtime state to: {filepath}")
     
     def __repr__(self) -> str:
         calibrated = "yes" if self.is_globally_calibrated() else "no"

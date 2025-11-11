@@ -104,23 +104,23 @@ class StageControlWidget(QWidget):
         arrows_layout = QGridLayout()
         arrows_layout.setSpacing(5)
         
-        # Y axis (vertical)
-        self.btn_y_up = QPushButton("↑ Y+")
-        self.btn_y_up.clicked.connect(lambda: self._jog('y', 1))
-        arrows_layout.addWidget(self.btn_y_up, 0, 1)
-        
-        self.btn_y_down = QPushButton("↓ Y-")
-        self.btn_y_down.clicked.connect(lambda: self._jog('y', -1))
-        arrows_layout.addWidget(self.btn_y_down, 2, 1)
-        
-        # Z axis (horizontal)
-        self.btn_z_left = QPushButton("← Z-")
-        self.btn_z_left.clicked.connect(lambda: self._jog('z', -1))
-        arrows_layout.addWidget(self.btn_z_left, 1, 0)
-        
-        self.btn_z_right = QPushButton("→ Z+")
-        self.btn_z_right.clicked.connect(lambda: self._jog('z', 1))
-        arrows_layout.addWidget(self.btn_z_right, 1, 2)
+        # Y axis (horizontal now: left/right)
+        self.btn_y_left = QPushButton("← Y-")
+        self.btn_y_left.clicked.connect(lambda: self._jog('y', -1))
+        arrows_layout.addWidget(self.btn_y_left, 1, 0)
+
+        self.btn_y_right = QPushButton("Y+ →")
+        self.btn_y_right.clicked.connect(lambda: self._jog('y', 1))
+        arrows_layout.addWidget(self.btn_y_right, 1, 2)
+
+        # Z axis (vertical now: up/down)
+        self.btn_z_up = QPushButton("↑ Z+")
+        self.btn_z_up.clicked.connect(lambda: self._jog('z', 1))
+        arrows_layout.addWidget(self.btn_z_up, 0, 1)
+
+        self.btn_z_down = QPushButton("↓ Z-")
+        self.btn_z_down.clicked.connect(lambda: self._jog('z', -1))
+        arrows_layout.addWidget(self.btn_z_down, 2, 1)
         
         # Center (home)
         self.btn_center = QPushButton("⊙")

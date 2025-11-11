@@ -62,37 +62,33 @@ class HardwareManager:
             'mock_always': True  # Mock hardware always available
         }
     
-    def initialize_mock_hardware(self) -> Tuple[bool, str]:
+    def initialize_mock_hardware(self, layout_source: str = "config/mock_layout.json") -> Tuple[bool, str]:
         """
         Initialize mock hardware.
         
-        Returns:
-            (success, message)
+        Args:
+            layout_source: Path to DESIGN file (with ground truth)
         """
         try:
-            # Import mock hardware
             from HardwareControl.SetupMotor.mockStage_v2 import MockXYZStage
             from HardwareControl.SetupMotor.stageAdapter import StageAdapterUM
             from HardwareControl.CameraControl.mock_camera_v3 import MockCamera
             
-            # Initialize stage (nm internally)
+            # Stage
             stage_nm = MockXYZStage(start_positions={'x': 0, 'y': 0, 'z': 0})
             self.stage = stage_nm
-            
-            # Create micrometer adapter
             self.stage_adapter = StageAdapterUM(stage_nm)
             
-            # Initialize camera with stage reference
-            if not Path(self.layout_path).exists():
-                return False, f"Layout file not found: {self.layout_path}"
+            # Camera needs DESIGN file (with ground truth)
+            if not Path(layout_source).exists():
+                return False, f"Design file not found: {layout_source}"
             
             self.camera = MockCamera(
-                layout_config_path=self.layout_path,
-                stage_ref=self.stage_adapter  # Pass µm adapter
+                layout_config_path=layout_source,  # ALWAYS use design source
+                stage_ref=self.stage_adapter
             )
             self.camera.connect()
             
-            # Link camera as observer
             stage_nm.set_camera_observer(self.camera)
             
             self.mode = "mock"

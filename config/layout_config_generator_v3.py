@@ -33,7 +33,7 @@ def generate_layout_config_v3(
     block_spacing: float = 300.0,
     block_size: float = 200.0,
     simulated_rotation: float = 0.0,
-    simulated_translation: Tuple[float, float] = (0.0, 0.0),
+    simulated_translation: Tuple[float, float] = (300.0, 200.0),
     block_rotation_std: float = 0.1,
     block_translation_std: float = 1.0,
     random_seed: int = 42,
@@ -342,7 +342,7 @@ if __name__ == "__main__":
         ascii_file=ascii_file,
         output_file=output_file,
         simulated_rotation=3.0,
-        simulated_translation=(0, 0.0),
+        simulated_translation=(300.0, 200.0),
         block_rotation_std=5.0,
         block_translation_std=1.0,
         random_seed=42

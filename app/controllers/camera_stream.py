@@ -1,7 +1,12 @@
-"""
-Camera Stream Controller
 
-Manages camera acquisition in a separate thread with color scaling.
+# ============================================================================
+# FILE 1: app/controllers/camera_stream.py - MODIFIED (OPTIMIZED)
+# ============================================================================
+
+"""
+Camera Stream Controller - WITH FOURIER TRANSFORM SUPPORT
+
+Manages camera acquisition in a separate thread with color scaling and FFT.
 """
 
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
@@ -9,21 +14,22 @@ import time
 import numpy as np
 import cv2
 from typing import Optional
+try:
+    import scipy.fft as fft
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+    print("Warning: scipy not available, Fourier transform disabled")
 
 
 class ColorScaleManager:
     """
     Manages color scaling and colormap application for camera images.
-    
-    Handles:
-    - Auto-scaling (percentile-based)
-    - Manual min/max scaling
-    - Colormap application (gray, jet, hot, viridis, etc.)
+    NOW HANDLES FOURIER TRANSFORM TOO!
     """
     
-    # Available colormaps
     COLORMAPS = {
-        'gray': None,  # No colormap = grayscale
+        'gray': None,
         'jet': cv2.COLORMAP_JET,
         'hot': cv2.COLORMAP_HOT,
         'viridis': cv2.COLORMAP_VIRIDIS,
@@ -34,12 +40,17 @@ class ColorScaleManager:
     }
     
     def __init__(self):
-        self.mode = 'auto'  # 'auto' or 'manual'
+        self.mode = 'auto'
         self.min_val = 0
         self.max_val = 4095
-        self.auto_percentile = (1, 99)  # percentiles for auto-scaling
+        self.auto_percentile = (1, 99)
         self.colormap = 'gray'
         self.last_stats = {'min': 0, 'max': 4095, 'mean': 0}
+        self.fourier_mode = False  # NEW
+    
+    def set_fourier_mode(self, enabled: bool):
+        """Enable/disable Fourier transform mode."""
+        self.fourier_mode = enabled
     
     def set_mode(self, mode: str):
         """Set scaling mode ('auto' or 'manual')."""
@@ -61,12 +72,52 @@ class ColorScaleManager:
             raise ValueError(f"Unknown colormap: {colormap}")
         self.colormap = colormap
     
+    def apply_fourier_transform(self, image: np.ndarray) -> np.ndarray:
+        """
+        Apply 2D Fourier transform to image.
+        Returns magnitude spectrum ready for color scaling.
+        """
+        if not HAS_SCIPY:
+            return image  # Fallback
+        
+        # Convert to grayscale if needed
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        elif image.dtype == np.uint16:
+            gray = (image / 256).astype(np.uint8)
+        else:
+            gray = image
+        
+        # 2D FFT
+        f_transform = fft.fft2(gray)
+        f_shifted = fft.fftshift(f_transform)
+        
+        # Magnitude spectrum (log scale)
+        magnitude = np.abs(f_shifted)
+        magnitude_log = np.log1p(magnitude)
+        
+        # Return as float32 for scaling
+        return magnitude_log.astype(np.float32)
+    
     def apply_scaling(self, image: np.ndarray) -> np.ndarray:
-        """Apply color scaling to image - WITH INVERT SUPPORT."""
+        """Apply color scaling to image - HANDLES BOTH REAL AND FOURIER."""
         if image is None or image.size == 0:
             return np.zeros((100, 100, 3), dtype=np.uint8)
         
-        # Calculate scaling range
+        # Step 1: Apply Fourier transform if enabled
+        if self.fourier_mode and HAS_SCIPY:
+            image = self.apply_fourier_transform(image)
+        
+        # Step 2: Normalize to uint16 range if needed
+        if image.dtype == np.float32 or image.dtype == np.float64:
+            # Already processed (Fourier), scale to 0-65535
+            img_min, img_max = image.min(), image.max()
+            if img_max > img_min:
+                image = ((image - img_min) / (img_max - img_min) * 65535).astype(np.uint16)
+            else:
+                image = np.zeros_like(image, dtype=np.uint16)
+        
+        # Step 3: Calculate scaling range
         if self.mode == 'auto':
             try:
                 vmin = np.percentile(image, self.auto_percentile[0])
@@ -85,7 +136,7 @@ class ColorScaleManager:
             'scale_max': float(vmax)
         }
         
-        # Scale to 0-255
+        # Step 4: Scale to 0-255
         if vmax > vmin:
             scaled = np.clip((image - vmin) / (vmax - vmin), 0.0, 1.0)
         else:
@@ -93,11 +144,11 @@ class ColorScaleManager:
         
         img_8bit = (scaled * 255).astype(np.uint8)
         
-        # FIX: Check for inversion flag
+        # Step 5: Check for inversion
         if hasattr(self, 'invert_enabled') and self.invert_enabled:
             img_8bit = 255 - img_8bit
         
-        # Apply colormap
+        # Step 6: Apply colormap
         cmap = self.COLORMAPS.get(self.colormap)
         if cmap is not None:
             img_colored = cv2.applyColorMap(img_8bit, cmap)
@@ -113,26 +164,15 @@ class ColorScaleManager:
 
 class CameraStreamThread(QThread):
     """
-    Camera streaming thread.
-    
-    Continuously acquires frames from camera and emits processed images.
-    Handles color scaling in this thread to avoid blocking UI.
+    Camera streaming thread with Fourier transform support.
     """
     
-    frame_ready = pyqtSignal(object)  # numpy array (8-bit RGB)
+    frame_ready = pyqtSignal(object)
     frame_dropped = pyqtSignal()
-    stats_updated = pyqtSignal(dict)  # image statistics
+    stats_updated = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
     
     def __init__(self, camera, target_fps: int = 20, parent=None):
-        """
-        Initialize camera stream.
-        
-        Args:
-            camera: Camera object (MockCamera or ZylaCamera)
-            target_fps: Target frames per second
-            parent: Parent QObject
-        """
         super().__init__(parent)
         
         self.camera = camera
@@ -141,10 +181,8 @@ class CameraStreamThread(QThread):
         
         self.color_manager = ColorScaleManager()
         
-        # Thread safety
         self.mutex = QMutex()
         
-        # Performance tracking
         self.frame_count = 0
         self.dropped_frames = 0
         self.last_fps_time = time.time()
@@ -170,6 +208,11 @@ class CameraStreamThread(QThread):
         with QMutexLocker(self.mutex):
             self.color_manager.set_manual_range(min_val, max_val)
     
+    def set_fourier_mode(self, enabled: bool):
+        """Enable/disable Fourier transform (thread-safe)."""
+        with QMutexLocker(self.mutex):
+            self.color_manager.set_fourier_mode(enabled)
+    
     def run(self):
         """Main thread loop."""
         interval = 1.0 / self.target_fps
@@ -189,16 +232,15 @@ class CameraStreamThread(QThread):
                     time.sleep(0.1)
                     continue
                 
-                # Check if enough time has passed since last emit
+                # Check if enough time has passed
                 now = time.time()
                 if now - last_emit < interval:
-                    # Skip frame to maintain target FPS
                     self.dropped_frames += 1
                     self.frame_dropped.emit()
-                    time.sleep(interval * 0.5)  # Small sleep
+                    time.sleep(interval * 0.5)
                     continue
                 
-                # Process frame (with thread-safe color manager access)
+                # Process frame (FFT happens here in worker thread!)
                 with QMutexLocker(self.mutex):
                     try:
                         processed = self.color_manager.apply_scaling(frame)
@@ -213,7 +255,7 @@ class CameraStreamThread(QThread):
                 last_emit = now
                 self.frame_count += 1
                 
-                # Update FPS calculation every second
+                # Update FPS
                 if now - self.last_fps_time >= 1.0:
                     self.actual_fps = self.frame_count / (now - self.last_fps_time)
                     self.frame_count = 0
@@ -234,7 +276,7 @@ class CameraStreamThread(QThread):
     def stop(self):
         """Stop the camera stream."""
         self.stop_flag = True
-        self.wait(2000)  # Wait up to 2 seconds
+        self.wait(2000)
     
     def get_actual_fps(self) -> float:
         """Get actual achieved frame rate."""

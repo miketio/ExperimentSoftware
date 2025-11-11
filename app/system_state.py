@@ -65,6 +65,7 @@ class CameraState:
     zoom_level: float = 1.0
     show_crosshair: bool = True
     show_scale_bar: bool = True
+    show_fourier: bool = False  # NEW: Fourier transform mode
 
 
 class SystemState:

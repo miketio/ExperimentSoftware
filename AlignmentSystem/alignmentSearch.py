@@ -41,7 +41,7 @@ class AlignmentSearcher:
                             search_radius_um: float = 50.0,
                             step_um: float = 10.0,
                             label: str = "Fiducial",
-                            plot_progress: bool = True) -> Optional[Dict[str, Any]]:
+                            plot_progress: bool = True, cancel_callback: bool = False) -> Optional[Dict[str, Any]]:
         """
         Grid search for fiducial with visualization (all units in µm).
 
@@ -52,6 +52,7 @@ class AlignmentSearcher:
             step_um: Grid step size (µm)
             label: Label for printing/plotting
             plot_progress: Whether to show grid visualization
+            cancel_callback: Function that returns True if cancelled
 
         Returns:
             dict with:
@@ -82,6 +83,11 @@ class AlignmentSearcher:
 
         for Y in y_positions:
             for Z in z_positions:
+                # CHECK CANCELLATION
+                if cancel_callback and cancel_callback():
+                    print(f"[AlignmentSearcher] Search cancelled")
+                    return None
+                
                 checked += 1
                 if checked % 10 == 0:
                     print(f"   Progress: {checked}/{total_positions} positions checked...", end='\r')

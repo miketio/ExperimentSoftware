@@ -6,7 +6,7 @@ Central window containing all UI panels and managing application lifecycle.
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTabWidget, QMenuBar, QStatusBar, QMessageBox, QFileDialog
+    QTabWidget, QMenuBar, QStatusBar, QMessageBox, QFileDialog, QDialog
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup
@@ -94,24 +94,23 @@ class MainWindow(QMainWindow):
             stage=self.stage,
             runtime_layout=self.runtime_layout  # Added this parameter
         )
-        
+        # Add to imports at top of file
+        from app.controllers.autofocus_controller import AutofocusController
+        self.autofocus_controller = AutofocusController(
+            camera=self.camera,  
+            stage=self.stage,
+            signals=self.signals
+        )
         # Create navigation controller
         from app.controllers.navigation_controller import NavigationController
         self.navigation_controller = NavigationController(
             state=self.state,
             signals=self.signals,
             stage=self.stage,
-            alignment_system=self.alignment_controller  # Share alignment
+            alignment_system=self.alignment_controller.alignment_system,  # Pass HierarchicalAlignment
+            autofocus_controller=self.autofocus_controller
         )
-        # Add to imports at top of file
-        from app.controllers.autofocus_controller import AutofocusController
 
-        # In __init__ method, add after other controllers:
-        self.autofocus_controller = AutofocusController(
-            camera=self.camera,  
-            stage=self.stage,
-            signals=self.signals
-        )
         # Central widget
         central = QWidget()
         self.setCentralWidget(central)
@@ -128,18 +127,26 @@ class MainWindow(QMainWindow):
         
         # Right: Control panels (tabs)
         control_tabs = QTabWidget()
-        
+
         # Stage control tab
         self.stage_control = StageControlWidget(
             self.state, self.signals, self.stage
         )
         control_tabs.addTab(self.stage_control, "Stage Control")
-        
+
         # Alignment panel tab
-        self.alignment_panel = AlignmentPanelWidget(self.state, self.signals,
-                                                    self.alignment_controller)
+        self.alignment_panel = AlignmentPanelWidget(
+            self.state, self.signals, self.alignment_controller
+        )
         control_tabs.addTab(self.alignment_panel, "Alignment")
-        
+
+        # Setup panel tab (NEW)
+        from app.widgets.setup_panel import SetupPanelWidget
+        self.setup_panel = SetupPanelWidget(
+            self.state, self.signals, self.runtime_layout, self.autofocus_controller
+        )
+        control_tabs.addTab(self.setup_panel, "Setup")
+
         top_splitter.addWidget(control_tabs)
         top_splitter.setStretchFactor(0, 3)  # Camera gets more space
         top_splitter.setStretchFactor(1, 1)
@@ -187,6 +194,14 @@ class MainWindow(QMainWindow):
         # Calibration menu
         calib_menu = menubar.addMenu("&Calibration")
         
+        # NEW: Set Block 1 Position (with camera view)
+        # set_block1_action = QAction("Set &Block 1 Position...", self)
+        # set_block1_action.setShortcut("Ctrl+B")
+        # set_block1_action.triggered.connect(self._set_block1_position)
+        # calib_menu.addAction(set_block1_action)
+        
+        calib_menu.addSeparator()
+        
         run_global_action = QAction("Run &Global Alignment", self)
         run_global_action.triggered.connect(self._run_global_alignment)
         calib_menu.addAction(run_global_action)
@@ -197,6 +212,14 @@ class MainWindow(QMainWindow):
         
         calib_menu.addSeparator()
         
+        # NEW: Manual fiducial capture
+        manual_fiducial_action = QAction("&Manual Fiducial Capture...", self)
+        manual_fiducial_action.setShortcut("Ctrl+M")
+        manual_fiducial_action.triggered.connect(self._manual_fiducial_capture)
+        calib_menu.addAction(manual_fiducial_action)
+
+        calib_menu.addSeparator()
+
         reset_calib_action = QAction("&Reset All Calibrations", self)
         reset_calib_action.triggered.connect(self._reset_calibrations)
         calib_menu.addAction(reset_calib_action)
@@ -239,6 +262,18 @@ class MainWindow(QMainWindow):
         self.invert_action.triggered.connect(self._toggle_invert)
         view_menu.addAction(self.invert_action)
         
+
+        view_menu.addSeparator()
+
+        # Fourier transform option
+        self.fourier_action = QAction("Show &Fourier Transform", self)
+        self.fourier_action.setCheckable(True)
+        self.fourier_action.setChecked(False)
+        self.fourier_action.setShortcut("Ctrl+F")
+        self.fourier_action.triggered.connect(self._toggle_fourier)
+        view_menu.addAction(self.fourier_action)
+
+
         view_menu.addSeparator()
         
         # Zoom controls
@@ -257,8 +292,8 @@ class MainWindow(QMainWindow):
         zoom_200_action.triggered.connect(lambda: self.camera_view.set_zoom(2.0))
         view_menu.addAction(zoom_200_action)
         
-        zoom_50_action = QAction("Zoom &50%", self)
-        zoom_50_action.triggered.connect(lambda: self.camera_view.set_zoom(0.5))
+        zoom_50_action = QAction("Zoom &400%", self)
+        zoom_50_action.triggered.connect(lambda: self.camera_view.set_zoom(4.0))
         view_menu.addAction(zoom_50_action)
         
         view_menu.addSeparator()
@@ -279,10 +314,10 @@ class MainWindow(QMainWindow):
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
         
-        autofocus_action = QAction("Run &Autofocus", self)
-        autofocus_action.setShortcut("Ctrl+F")
-        autofocus_action.triggered.connect(self._run_autofocus)
-        tools_menu.addAction(autofocus_action)
+        # autofocus_action = QAction("Run &Autofocus", self)
+        # autofocus_action.setShortcut("Ctrl+Shift+F")
+        # autofocus_action.triggered.connect(self._run_autofocus)
+        # tools_menu.addAction(autofocus_action)
         
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -476,6 +511,24 @@ class MainWindow(QMainWindow):
         self.signals.status_message.emit("Block calibration not yet implemented")
         # TODO: Implement block calibration
     
+    
+    # Add the handler method:
+    def _manual_fiducial_capture(self):
+        """Open manual fiducial capture dialog."""
+        from app.widgets.manual_fiducial_dialog import ManualFiducialDialog
+        
+        dialog = ManualFiducialDialog(
+            state=self.state,
+            runtime_layout=self.runtime_layout,
+            alignment_controller=self.alignment_controller,
+            parent=self
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Save state
+            self.runtime_layout.save_to_json(self.runtime_file_path)
+            self.signals.status_message.emit("Manual calibration saved")
+
     def _reset_calibrations(self):
         """Reset all calibrations."""
         reply = QMessageBox.question(
@@ -491,17 +544,45 @@ class MainWindow(QMainWindow):
             for block in self.state.blocks.values():
                 block.status = self.state.blocks[1].status.NOT_CALIBRATED
                 block.calibration_error = None
+
+            # Reset RuntimeLayout (ADDED)
+            if hasattr(self, 'runtime_layout'):
+                self.runtime_layout.clear_measured_calibration()
+            
+            # Reset HierarchicalAlignment (ADDED)
+            if hasattr(self, 'alignment_controller'):
+                self.alignment_controller.alignment_system.reset_calibration()
+            
+            # Emit state reset signal
             self.signals.state_reset.emit()
+            
+            # Force UI updates (ADDED)
+            self.alignment_panel._update_global_status()
+            self.alignment_panel._update_block_status(self.state.navigation.current_block)
+            self.block_grid._update_all_buttons()
+            
+            # Refresh waveguide panel if block selected
+            if self.state.navigation.current_block is not None:
+                self.waveguide_panel.refresh_waveguide_list()
+            
             self.signals.status_message.emit("All calibrations reset")
+            
+            print("[MainWindow] Calibrations reset complete")
     
     def _goto_target(self):
         """Navigate to target waveguide."""
         self.waveguide_panel.navigate_to_target()
     
     def _run_autofocus(self):
-        """Run autofocus (stub)."""
-        self.signals.status_message.emit("Autofocus not yet implemented")
-        # TODO: Implement autofocus controller
+        """Run autofocus dialog."""
+        from app.widgets.autofocus_dialog import AutofocusDialog
+        
+        dialog = AutofocusDialog(
+            autofocus_controller=self.autofocus_controller,
+            state=self.state,
+            parent=self
+        )
+        dialog.exec()
     
     def _show_about(self):
         """Show about dialog."""
@@ -514,6 +595,50 @@ class MainWindow(QMainWindow):
             "<p><b>Hardware Mode:</b> " + self.state.hardware_mode.value.upper() + "</p>"
         )
     
+
+    def _set_block1_position(self):
+        """Open Block 1 position dialog - SIMPLIFIED."""
+        from app.widgets.block1_position_dialog import Block1PositionDialog  # New simplified version
+        
+        dialog = Block1PositionDialog(
+            state=self.state,
+            runtime_layout=self.runtime_layout,
+            parent=self
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Save immediately
+            self.runtime_layout.save_to_json(self.runtime_file_path)
+            self.signals.status_message.emit("Block 1 position updated")
+
+    def _save_state(self):
+        """Save current state to runtime file."""
+        if not hasattr(self, 'runtime_file_path'):
+            print("ERROR: No runtime file path set")
+            return
+        
+        try:
+            self.runtime_layout.save_to_json(self.runtime_file_path)
+            self.signals.state_saved.emit(self.runtime_file_path)
+            self.signals.status_message.emit(f"Saved state to {Path(self.runtime_file_path).name}")
+        except Exception as e:
+            self.signals.error_occurred.emit("Failed to Save State", str(e))
+    
+    def _toggle_fourier(self, checked: bool):
+        """Toggle Fourier transform display - NOW FAST!"""
+        self.state.camera.show_fourier = checked
+        
+        # Tell camera thread to enable/disable FFT
+        if self.camera_thread:
+            self.camera_thread.set_fourier_mode(checked)
+        
+        if checked:
+            self.signals.status_message.emit("Fourier transform enabled (frequency domain)")
+            # Suggest good colormap for Fourier
+            if self.state.camera.colormap == 'gray':
+                self.signals.status_message.emit("Tip: Try 'jet' or 'hot' colormap for better frequency visualization")
+        else:
+            self.signals.status_message.emit("Real space image")
     # ========================================================================
     # Signal Handlers
     # ========================================================================

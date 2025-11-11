@@ -1,0 +1,10 @@
+{
+  "design_name": "ArrayD_QuasiPeriodic_20Blocks",
+  "version": "2.1",
+  "saved_timestamp": "2025-11-08T14:21:33.426056",
+  "source_design_file": "config/mock_layout.json",
+  "block_1_stage_position_um": [
+    320.0,
+    50.0
+  ]
+}

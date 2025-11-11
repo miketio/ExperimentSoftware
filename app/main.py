@@ -7,8 +7,9 @@ Launch the PyQt6 application with hardware initialization.
 
 import sys
 from pathlib import Path
-from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton, QRadioButton, QButtonGroup
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton, QRadioButton, QButtonGroup, QFileDialog
 from PyQt6.QtCore import Qt
+import json
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -104,24 +105,9 @@ def main():
     print("Microscope Alignment GUI")
     print("="*70)
     
-    # Initialize hardware manager
-    layout_path = project_root / "config" / "mock_layout.json"
-    hw_manager = HardwareManager(layout_path=str(layout_path))
+    # Initialize hardware manager (without layout initially)
+    hw_manager = HardwareManager(layout_path=None)
     
-    # Load RuntimeLayout
-    print("\nLoading RuntimeLayout...")
-    try:
-        from config.layout_models import RuntimeLayout
-        runtime_layout = RuntimeLayout.from_json_file(str(layout_path))
-        print(f"✓ RuntimeLayout loaded: {runtime_layout.design_name}")
-    except Exception as e:
-        QMessageBox.critical(
-            None,
-            "Layout Load Failed",
-            f"Failed to load layout configuration:\n\n{e}\n\nApplication will exit."
-        )
-        print(f"\nERROR: {e}")
-        return 1
     # Get hardware availability
     availability = hw_manager.get_hardware_availability()
     print(f"\nHardware Detection:")
@@ -137,9 +123,13 @@ def main():
     selected_mode = dialog.get_selected_mode()
     print(f"\nSelected mode: {selected_mode.upper()}")
     
-    # Initialize hardware
+    # Initialize hardware BEFORE layout (so we can capture stage position)
     print("Initializing hardware...")
     if selected_mode == "mock":
+        # For mock mode, we need a temporary layout for camera
+        temp_layout_path = "config/mock_layout.json"
+        if Path(temp_layout_path).exists():
+            hw_manager.layout_path = temp_layout_path
         success, message = hw_manager.initialize_mock_hardware()
     else:
         success, message = hw_manager.initialize_real_hardware()
@@ -153,7 +143,7 @@ def main():
         print(f"\nERROR: {message}")
         return 1
     
-    print(f"✓ {message}")
+    print(f"✅ {message}")
     
     # Create system state and signals
     state = SystemState()
@@ -163,8 +153,74 @@ def main():
     
     signals = SystemSignals()
     
-
-    # Create main window
+    # ========================================================================
+    # LAYOUT LOADING / CREATION
+    # ========================================================================
+    
+    
+    DESIGN_FILE = "config/mock_layout.json"      # SOURCE (never modified)
+    RUNTIME_FILE = "config/runtime_state.json"   # MEASUREMENTS ONLY
+    
+    runtime_layout = None
+    
+    # Check if design source exists
+    if not Path(DESIGN_FILE).exists():
+        print(f"ERROR: Design file not found: {DESIGN_FILE}")
+        QMessageBox.critical(
+            None,
+            "Design File Missing",
+            f"Design file not found: {DESIGN_FILE}\n\n"
+            "Please create a layout first.\n\n"
+            "Application will exit."
+        )
+        return 1
+    
+    # Load design
+    try:
+        from config.layout_models import RuntimeLayout
+        runtime_layout = RuntimeLayout.from_json_file(DESIGN_FILE)
+        runtime_layout.metadata['source_file'] = DESIGN_FILE
+        print(f"✅ Loaded design: {runtime_layout.design_name}")
+    except Exception as e:
+        print(f"ERROR loading design: {e}")
+        QMessageBox.critical(
+            None,
+            "Design Load Failed",
+            f"Failed to load design:\n\n{e}\n\nApplication will exit."
+        )
+        return 1
+    
+    # Load runtime state if exists
+    if Path(RUNTIME_FILE).exists():
+        print(f"\nFound runtime state: {RUNTIME_FILE}")
+        try:
+            with open(RUNTIME_FILE, 'r') as f:
+                runtime_data = json.load(f)
+            
+            # Apply Block 1 position
+            if 'block_1_stage_position_um' in runtime_data:
+                pos = runtime_data['block_1_stage_position_um']
+                runtime_layout.set_block_1_position(pos[0], pos[1])
+                print(f"  ✅ Block 1 position: Y={pos[0]:.3f}, Z={pos[1]:.3f} µm")
+            
+            # Apply calibration
+            if 'measured_calibration' in runtime_data:
+                runtime_layout._load_measured_calibration(runtime_data['measured_calibration'])
+                print(f"  ✅ Loaded calibration data")
+        
+        except Exception as e:
+            print(f"  ⚠️ Failed to load runtime state: {e}")
+    
+    # Default Block 1 position to (0,0) if not set
+    if not runtime_layout.has_block_1_position():
+        print("\n⚠️ Block 1 position not set - defaulting to (0, 0)")
+        print("   Use menu: Calibration > Set Block 1 Position")
+        runtime_layout.set_block_1_position(0.0, 0.0)
+    
+    # ========================================================================
+    # LAUNCH MAIN WINDOW
+    # ========================================================================
+    
     print("\nLaunching GUI...")
     main_window = MainWindow(
         state=state,
@@ -172,12 +228,14 @@ def main():
         camera=hw_manager.get_camera(),
         stage=hw_manager.get_stage(),
         hw_manager=hw_manager,
-        runtime_layout=runtime_layout  # NEW: Pass layout for alignment
+        runtime_layout=runtime_layout
     )
     
+    # Store runtime file path for saving
+    main_window.runtime_file_path = RUNTIME_FILE
     main_window.show()
     
-    print("✓ GUI launched successfully")
+    print("✅ GUI launched successfully")
     print("\nApplication running. Close window to exit.")
     print("="*70)
     
@@ -188,7 +246,7 @@ def main():
     print("\nShutting down...")
     main_window.cleanup()
     hw_manager.shutdown()
-    print("✓ Shutdown complete")
+    print("✅ Shutdown complete")
     
     return exit_code
 

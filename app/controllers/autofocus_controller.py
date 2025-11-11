@@ -108,10 +108,10 @@ class AutofocusWorker(QThread):
                 # Move stage
                 self.stage.move_abs(self.axis, pos)
                 time.sleep(0.05)  # Small settle time
-                
+
                 # Acquire image
                 try:
-                    image = self.camera.acquire_image()
+                    image = self.camera.acquire_single_image()
                 except Exception as e:
                     print(f"[Autofocus] Warning: Failed to acquire image: {e}")
                     continue

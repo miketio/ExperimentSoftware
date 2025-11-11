@@ -1,8 +1,8 @@
 # app/widgets/alignment_panel.py
 """Alignment Control Panel - Updated with controller integration."""
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSpinBox, QCheckBox
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSpinBox, QCheckBox, QComboBox, QMessageBox
+from PyQt6.QtCore import QTimer, Qt  # ← Add this line
 
 
 class AlignmentPanelWidget(QWidget):
@@ -109,6 +109,76 @@ class AlignmentPanelWidget(QWidget):
         layout.addWidget(block_group)
         
         layout.addStretch()
+        # ADD TO EXISTING alignment_panel.py - after Block Alignment section
+        # Manual Fiducial Capture
+        manual_group = QGroupBox("Manual Fiducial Capture")
+        manual_layout = QVBoxLayout()
+
+        info = QLabel(
+            "Manually capture fiducial positions by moving stage\n"
+            "and clicking Capture. Requires ≥2 fiducials."
+        )
+        info.setStyleSheet("QLabel { color: #666; font-size: 9pt; }")
+        info.setWordWrap(True)
+        manual_layout.addWidget(info)
+
+        # Selection
+        selection = QHBoxLayout()
+        selection.addWidget(QLabel("Block:"))
+        self.manual_block_combo = QComboBox()
+        self.manual_block_combo.addItems([str(i) for i in range(1, 21)])
+        selection.addWidget(self.manual_block_combo)
+
+        selection.addWidget(QLabel("Corner:"))
+        self.manual_corner_combo = QComboBox()
+        self.manual_corner_combo.addItems(['top_left', 'top_right', 'bottom_left', 'bottom_right'])
+        selection.addWidget(self.manual_corner_combo)
+        selection.addStretch()
+        manual_layout.addLayout(selection)
+
+        # Current position (live update)
+        self.manual_pos_label = QLabel("Current: Y=?.???, Z=?.???")
+        self.manual_pos_label.setStyleSheet(
+            "QLabel { font-family: monospace; font-size: 11pt; "
+            "background-color: #2C2C2C; color: lime; padding: 8px; }"
+        )
+        manual_layout.addWidget(self.manual_pos_label)
+
+        # Capture button
+        self.btn_manual_capture = QPushButton("📷 Capture Fiducial")
+        self.btn_manual_capture.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; "
+            "font-weight: bold; padding: 8px; }"
+        )
+        self.btn_manual_capture.clicked.connect(self._manual_capture)
+        manual_layout.addWidget(self.btn_manual_capture)
+
+        # Captured list
+        self.manual_list = QLabel("Captured: 0 fiducials")
+        self.manual_list.setStyleSheet("QLabel { font-size: 9pt; color: #666; }")
+        manual_layout.addWidget(self.manual_list)
+
+        btn_row = QHBoxLayout()
+        self.btn_manual_clear = QPushButton("Clear")
+        self.btn_manual_clear.clicked.connect(self._manual_clear)
+        btn_row.addWidget(self.btn_manual_clear)
+
+        self.btn_manual_apply = QPushButton("✅ Apply Calibration")
+        self.btn_manual_apply.clicked.connect(self._manual_apply)
+        self.btn_manual_apply.setEnabled(False)
+        btn_row.addWidget(self.btn_manual_apply)
+        manual_layout.addLayout(btn_row)
+
+        manual_group.setLayout(manual_layout)
+        layout.addWidget(manual_group)
+
+        # Storage for captured fiducials
+        self.manual_fiducials = []
+
+        # Position update timer
+        self.manual_timer = QTimer()
+        self.manual_timer.timeout.connect(self._update_manual_position)
+        self.manual_timer.start(200)
     
     def _connect_signals(self):
         """Connect signals."""
@@ -223,3 +293,130 @@ class AlignmentPanelWidget(QWidget):
         
         # Enable block calibration only if global is done
         self.btn_calibrate_block.setEnabled(self.state.global_calibrated)
+
+    def _update_manual_position(self):
+        """Update current position display."""
+        y, z = self.state.stage_position['y'], self.state.stage_position['z']
+        self.manual_pos_label.setText(f"Current: Y={y:.3f}, Z={z:.3f} µm")
+
+    def _manual_capture(self):
+        """Capture current fiducial position."""
+        block_id = int(self.manual_block_combo.currentText())
+        corner = self.manual_corner_combo.currentText()
+        y = self.state.stage_position['y']
+        z = self.state.stage_position['z']
+        
+        # Check for duplicates
+        for fid in self.manual_fiducials:
+            if fid['block_id'] == block_id and fid['corner'] == corner:
+                self.manual_fiducials.remove(fid)
+                break
+        
+        # Add
+        self.manual_fiducials.append({
+            'block_id': block_id,
+            'corner': corner,
+            'stage_Y': y,
+            'stage_Z': z,
+            'confidence': 1.0,
+            'verification_error_um': 0.0
+        })
+        
+        # Update UI
+        self.manual_list.setText(f"Captured: {len(self.manual_fiducials)} fiducials")
+        self.btn_manual_apply.setEnabled(len(self.manual_fiducials) >= 2)
+        
+        # Flash green
+        self.manual_pos_label.setStyleSheet(
+            "QLabel { font-family: monospace; font-size: 11pt; "
+            "background-color: green; color: white; padding: 8px; }"
+        )
+        QTimer.singleShot(500, lambda: self.manual_pos_label.setStyleSheet(
+            "QLabel { font-family: monospace; font-size: 11pt; "
+            "background-color: #2C2C2C; color: lime; padding: 8px; }"
+        ))
+        
+        print(f"[AlignmentPanel] Captured Block {block_id} {corner}: ({y:.3f}, {z:.3f}) µm")
+
+    def _manual_clear(self):
+        """Clear captured fiducials."""
+        self.manual_fiducials.clear()
+        self.manual_list.setText("Captured: 0 fiducials")
+        self.btn_manual_apply.setEnabled(False)
+
+    def _manual_apply(self):
+        """Apply manual calibration."""
+        if len(self.manual_fiducials) < 2:
+            QMessageBox.warning(
+                self,
+                "Not Enough Data",
+                "Need at least 2 fiducials for calibration."
+            )
+            return
+        
+        # Determine type (global or block)
+        unique_blocks = set(f['block_id'] for f in self.manual_fiducials)
+        
+        try:
+            if len(unique_blocks) > 1:
+                # Global calibration
+                result = self.alignment_controller.alignment_system.calibrate_global(
+                    self.manual_fiducials
+                )
+                
+                # Update runtime layout
+                from app.main_window import MainWindow
+                main = self.window()
+                if isinstance(main, MainWindow):
+                    main.runtime_layout.set_global_calibration(
+                        rotation=result['rotation_deg'],
+                        translation=result['translation_um'],
+                        calibration_error=result['mean_error_um'],
+                        num_points=len(self.manual_fiducials)
+                    )
+                
+                QMessageBox.information(
+                    self,
+                    "Calibration Complete",
+                    f"Global calibration successful!\n\n"
+                    f"Rotation: {result['rotation_deg']:.6f}°\n"
+                    f"Error: {result['mean_error_um']:.6f} µm"
+                )
+                
+            else:
+                # Block calibration
+                block_id = list(unique_blocks)[0]
+                result = self.alignment_controller.alignment_system.calibrate_block(
+                    block_id,
+                    self.manual_fiducials
+                )
+                
+                from app.main_window import MainWindow
+                main = self.window()
+                if isinstance(main, MainWindow):
+                    main.runtime_layout.set_block_calibration(
+                        block_id=block_id,
+                        rotation=result['rotation_deg'],
+                        translation=result['origin_stage_um'],
+                        calibration_error=result['mean_error_um'],
+                        num_points=len(self.manual_fiducials)
+                    )
+                
+                QMessageBox.information(
+                    self,
+                    "Calibration Complete",
+                    f"Block {block_id} calibration successful!\n\n"
+                    f"Error: {result['mean_error_um']:.6f} µm"
+                )
+            
+            # Clear after success
+            self._manual_clear()
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Calibration Failed",
+                f"Failed to apply calibration:\n\n{e}"
+            )
+            import traceback
+            traceback.print_exc()
