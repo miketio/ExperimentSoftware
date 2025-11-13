@@ -218,7 +218,7 @@ class AsciiAssignmentPage(QWizardPage):
             return
         
         try:
-            from AlignmentSystem.ascii_parser import ASCIIParser
+            from alignment_system.ascii_parser import ASCIIParser
             
             parser = ASCIIParser(filename)
             parsed = parser.parse()
@@ -528,7 +528,7 @@ class LayoutWizard(QWizard):
                 raise ValueError("No ASCII files assigned")
             
             # Use layout generator
-            from config.layout_config_generator_v3 import generate_layout_config_v3
+            from config.layout_config_generator import generate_layout_config_v3
             from config.layout_models import RuntimeLayout
             
             # Generate with first ASCII file (temporary)

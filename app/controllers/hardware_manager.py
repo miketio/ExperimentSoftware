@@ -43,13 +43,13 @@ class HardwareManager:
         """Detect if real hardware is available."""
         # Try importing real hardware modules
         try:
-            from HardwareControl.CameraControl.zylaCamera import ZylaCamera
+            from hardware_control.camera_control.zyla_camera import ZylaCamera
             self.real_camera_available = True
         except Exception:
             self.real_camera_available = False
         
         try:
-            from HardwareControl.SetupMotor.smartactStage import SmarActXYZStage
+            from hardware_control.setup_motor.smartact_stage import SmarActXYZStage
             self.real_stage_available = True
         except Exception:
             self.real_stage_available = False
@@ -70,9 +70,9 @@ class HardwareManager:
             layout_source: Path to DESIGN file (with ground truth)
         """
         try:
-            from HardwareControl.SetupMotor.mockStage_v2 import MockXYZStage
-            from HardwareControl.SetupMotor.stageAdapter import StageAdapterUM
-            from HardwareControl.CameraControl.mock_camera_v3 import MockCamera
+            from hardware_control.setup_motor.mock_stage import MockXYZStage
+            from hardware_control.setup_motor.stage_adapter import StageAdapterUM
+            from hardware_control.camera_control.mock_camera import MockCamera
             
             # Stage
             stage_nm = MockXYZStage(start_positions={'x': 0, 'y': 0, 'z': 0})
@@ -106,9 +106,9 @@ class HardwareManager:
             (success, message)
         """
         try:
-            from HardwareControl.CameraControl.zylaCamera import ZylaCamera
-            from HardwareControl.SetupMotor.smartactStage import SmarActXYZStage
-            from HardwareControl.SetupMotor.stageAdapter import StageAdapterUM
+            from hardware_control.camera_control.zyla_camera import ZylaCamera
+            from hardware_control.setup_motor.smartact_stage import SmarActXYZStage
+            from hardware_control.setup_motor.stage_adapter import StageAdapterUM
             
             # Initialize stage
             stage_nm = SmarActXYZStage()

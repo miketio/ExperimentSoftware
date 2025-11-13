@@ -65,7 +65,7 @@ class NavigationWorker(QThread):
                     waveguide = block.get_waveguide(self.waveguide)
                     
                     # Use block_local_to_stage from CoordinateTransformV3
-                    from AlignmentSystem.coordinate_transform_v3 import CoordinateTransformV3
+                    from alignment_system.coordinate_transform_v3 import CoordinateTransformV3
                     transform = CoordinateTransformV3(self.alignment.layout)
                     transform.sync_with_runtime()
                     

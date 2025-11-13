@@ -55,7 +55,7 @@ class AlignmentController(QObject):
         self.runtime_layout = runtime_layout
         
         # Create HierarchicalAlignment instance for predictions
-        from AlignmentSystem.hierarchicalAlignment_v3 import HierarchicalAlignment
+        from alignment_system.hierarchical_alignment import HierarchicalAlignment
         self.alignment_system = HierarchicalAlignment(runtime_layout)
         
         # Worker and dialog

@@ -11,9 +11,9 @@ import numpy as np
 import time
 from typing import Optional, List, Dict, Any
 
-from AlignmentSystem.hierarchicalAlignment_v3 import HierarchicalAlignment
-from AlignmentSystem.alignmentSearch import AlignmentSearcher
-from AlignmentSystem.cv_tools import VisionTools
+from alignment_system.hierarchical_alignment import HierarchicalAlignment
+from alignment_system.alignment_search import AlignmentSearcher
+from alignment_system.cv_tools import VisionTools
 
 
 class AlignmentWorker(QThread):
