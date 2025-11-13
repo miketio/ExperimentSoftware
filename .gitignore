@@ -38,3 +38,9 @@ Thumbs.db
 
 # --- Keep subproject's .git folder (gemini-agent-code-assist) ---
 !gemini-agent-code-assist/.git/
+
+
+# from setup motor ignore dll, lib, h files
+*.dll
+*.lib
+*.h
