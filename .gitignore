@@ -43,4 +43,5 @@ Thumbs.db
 # from setup motor ignore dll, lib, h files
 *.dll
 *.lib
-*.h
+*.hGeminiAssistant/.env
+AgentFramework/.env
