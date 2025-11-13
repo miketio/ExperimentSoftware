@@ -130,7 +130,7 @@ class NavigationWorker(QThread):
                       f"Y+={offset_y:.3f}µm, Z+={offset_z:.3f}µm")
                 
                 # Relative move to shift from center to beam
-                self.stage.move_rel('y', offset_y)
+                self.stage.move_rel('y', -1*offset_y)
                 if self.cancelled:
                     return
                 

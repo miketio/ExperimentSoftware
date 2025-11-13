@@ -284,30 +284,68 @@ class CameraViewWidget(QWidget):
         else:
             display_w = w
         
-        # === NEW: BEAM INDICATOR (Red Circle) ===
         if self.state.camera.show_beam_indicator:
-            beam_x, beam_y = self.state.camera.beam_position_px
+            # Get beam position from state (stored in sensor coordinates: top-left origin, Y down)
+            beam_x_sensor, beam_y_sensor = self.state.camera.beam_position_px
             
-            # Scale beam position to display size (if image is scaled)
-            scale_x = display_w / 2048  # Adjust based on sensor size
-            scale_y = h / 2048
+            # Get ROI info from camera thread if available
+            roi_active = False
+            roi_left, roi_top, roi_width, roi_height = 0, 0, 2048, 2048
+
+            if self.camera_thread and hasattr(self.camera_thread.camera, 'roi'):
+                roi = self.camera_thread.camera.roi
+                if roi is not None:
+                    roi_active = True
+                    roi_left, roi_top, roi_width, roi_height = roi
             
-            beam_x_scaled = int(beam_x * scale_x)
-            beam_y_scaled = int(beam_y * scale_y)
+            # Transform beam position to display coordinates
+            if roi_active:
+                # Step 1: Transform sensor coords to ROI coords (still top-left origin)
+                beam_x_roi = beam_x_sensor - roi_left
+                beam_y_roi = beam_y_sensor - roi_top
+                
+                # Step 2: Check if beam is visible in current ROI
+                if (0 <= beam_x_roi < roi_width and 0 <= beam_y_roi < roi_height):
+                    # Step 3: Flip Y to match displayed image (after flipud)
+                    # Display has bottom-left origin, so we flip Y
+                    beam_y_roi_display = roi_height - beam_y_roi - 1
+                    
+                    # Step 4: Scale to widget size
+                    scale_x = display_w / roi_width
+                    scale_y = h / roi_height
+                    
+                    beam_x_scaled = int(beam_x_roi * scale_x)
+                    beam_y_scaled = int(beam_y_roi_display * scale_y)
+                else:
+                    # Beam outside current ROI - don't draw
+                    beam_x_scaled = None
+            else:
+                # No ROI - full sensor
+                # Step 1: Flip Y to match displayed image
+                beam_y_display = 2048 - beam_y_sensor - 1
+                
+                # Step 2: Scale to widget size
+                scale_x = display_w / 2048
+                scale_y = h / 2048
+                
+                beam_x_scaled = int(beam_x_sensor * scale_x)
+                beam_y_scaled = int(beam_y_display * scale_y)
             
-            # Draw red circle (beam spot)
-            painter.setPen(QPen(QColor(255, 0, 0), 3))
-            painter.drawEllipse(beam_x_scaled - 30, beam_y_scaled - 30, 60, 60)
-            
-            # Draw small red crosshair inside
-            painter.setPen(QPen(QColor(255, 0, 0), 2))
-            painter.drawLine(beam_x_scaled - 15, beam_y_scaled, beam_x_scaled + 15, beam_y_scaled)
-            painter.drawLine(beam_x_scaled, beam_y_scaled - 15, beam_x_scaled, beam_y_scaled + 15)
-            
-            # Label
-            painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-            painter.setPen(QColor(255, 0, 0))
-            painter.drawText(beam_x_scaled + 40, beam_y_scaled, "BEAM")
+            # Draw beam indicator if visible
+            if beam_x_scaled is not None:
+                # Draw red circle (beam spot)
+                painter.setPen(QPen(QColor(255, 0, 0), 3))
+                painter.drawEllipse(beam_x_scaled - 30, beam_y_scaled - 30, 60, 60)
+                
+                # Draw small red crosshair inside
+                painter.setPen(QPen(QColor(255, 0, 0), 2))
+                painter.drawLine(beam_x_scaled - 15, beam_y_scaled, beam_x_scaled + 15, beam_y_scaled)
+                painter.drawLine(beam_x_scaled, beam_y_scaled - 15, beam_x_scaled, beam_y_scaled + 15)
+                
+                # Label
+                painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+                painter.setPen(QColor(255, 0, 0))
+                painter.drawText(beam_x_scaled + 40, beam_y_scaled, "BEAM")
         
         # === Original center crosshair (optional - can remove if confusing) ===
         if self.state.camera.show_crosshair:
@@ -357,8 +395,8 @@ class CameraViewWidget(QWidget):
             f"Mean: {stats.get('mean', 0):.1f}"
         )
     
-    # Zoom methods (unchanged)
     def set_zoom(self, zoom: float):
+        """Set zoom level with configurable center (center or beam)."""
         self.state.camera.zoom_level = zoom
         if not self.camera_thread or not hasattr(self.camera_thread.camera, 'set_roi'):
             return
@@ -372,9 +410,21 @@ class CameraViewWidget(QWidget):
             roi_w = max(min_roi_size, min(roi_w, sensor_w))
             roi_h = max(min_roi_size, min(roi_h, sensor_h))
             
-            left = (sensor_w - roi_w) // 2
-            top = (sensor_h - roi_h) // 2
+            # Determine zoom center based on mode
+            if self.zoom_to_beam:
+                # Zoom to beam position
+                center_x, center_y = self.state.camera.beam_position_px
+
+            else:
+                # Zoom to image center (default)
+                center_x = sensor_w // 2
+                center_y = sensor_h // 2
             
+            # Calculate ROI position (trying to center on target)
+            left = center_x - roi_w // 2
+            top = center_y - roi_h // 2
+            
+            # Constrain to sensor bounds (best effort)
             left = max(0, min(left, sensor_w - roi_w))
             top = max(0, min(top, sensor_h - roi_h))
             
@@ -401,6 +451,12 @@ class CameraViewWidget(QWidget):
         """Change zoom center mode."""
         self.zoom_to_beam = (mode_text == 'Zoom to Beam')
         print(f"[CameraView] Zoom mode: {'beam' if self.zoom_to_beam else 'center'}")
+        
+        # Re-apply current zoom with new center
+        current_zoom_text = self.zoom_combo.currentText()
+        if current_zoom_text != 'Fit':
+            zoom = float(current_zoom_text.strip('%')) / 100.0
+            self.set_zoom(zoom)
 
     def _toggle_beam(self, checked: bool):
         """Toggle beam visibility."""
