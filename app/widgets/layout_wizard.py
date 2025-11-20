@@ -1,4 +1,4 @@
-# app/widgets/layout_wizard.py - UPDATED (No Block 1 Position Step)
+# app/widgets/layout_wizard.py - UPDATED
 """
 Layout Wizard - Multi-step layout creation
 
@@ -296,6 +296,9 @@ class BlockGridWidget(QGraphicsView):
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
         
+        # CHANGED: Center grid in view (no top-left bias)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
         self.block_items = {}
         self.block_labels = {}
     
@@ -305,7 +308,8 @@ class BlockGridWidget(QGraphicsView):
         self.block_items.clear()
         self.block_labels.clear()
         
-        block_size = 60
+        # CHANGED: Smaller block size (was 60)
+        block_size = 50
         spacing = 10
         
         block_id = 1
@@ -325,20 +329,25 @@ class BlockGridWidget(QGraphicsView):
                 # Block number
                 text = QGraphicsTextItem(str(block_id))
                 text.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-                text.setPos(x + block_size/2 - 10, y + 5)
+                # Adjust text centering
+                text_width = text.boundingRect().width()
+                text_height = text.boundingRect().height()
+                text.setPos(x + (block_size - text_width) / 2, y + (block_size - text_height) / 2 - 5)
                 self.scene.addItem(text)
                 
                 # Assignment label
                 label = QGraphicsTextItem("")
                 label.setFont(QFont("Arial", 7))
-                label.setPos(x + 5, y + block_size - 20)
+                label.setPos(x + 2, y + block_size - 15)
                 label.setDefaultTextColor(QColor(0, 100, 200))
                 self.scene.addItem(label)
                 self.block_labels[block_id] = label
                 
                 block_id += 1
         
-        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        # CHANGED: Removed fitInView() call.
+        # This prevents the grid from being zoomed in to fill the panel,
+        # keeping blocks at their natural size (50px).
     
     def mousePressEvent(self, event):
         """Handle click on block."""
@@ -365,7 +374,7 @@ class BlockGridWidget(QGraphicsView):
         if filename:
             # Assigned
             name = Path(filename).stem
-            label.setPlainText(name[:10])
+            label.setPlainText(name[:8])  # Truncate slightly more for 50px
             rect.setBrush(QBrush(QColor(200, 255, 200)))  # Green
         else:
             # Unassigned
@@ -394,58 +403,82 @@ class LayoutWizard(QWizard):
         self.finished.connect(self._on_finish)
     
     def _on_finish(self, result):
-        """Generate RuntimeLayout on completion."""
-        if result != QDialog.DialogCode.Accepted:
-            return
-        
-        try:
-            # Get parameters
-            blocks_per_row = self.field("blocks_per_row")
-            num_rows = self.field("num_rows")
-            block_size = self.field("block_size")
-            block_spacing = self.field("block_spacing")
-            print(f"DEBUG: Blocks/Row: {blocks_per_row}, Rows: {num_rows}, Size: {block_size}, Spacing: {block_spacing}")
-            # Generate RuntimeLayout from ASCII assignments
-            ascii_files = list(self.ascii_page.ascii_files.keys())
-            if not ascii_files:
-                raise ValueError("No ASCII files assigned")
+            """Generate RuntimeLayout on completion."""
+            if result != QDialog.DialogCode.Accepted:
+                return
             
-            # Use layout generator
-            from config.layout_config_generator import generate_layout_config_v3
-            from config.layout_models import RuntimeLayout
-            
-            # Generate with first ASCII file (temporary)
-            _ = generate_layout_config_v3(
-                ascii_file=ascii_files[0],
-                output_file="config/runtime_layout.json",
-                blocks_per_row=blocks_per_row,
-                num_rows=num_rows,
-                block_size=block_size,
-                block_spacing=block_spacing,
-                simulated_rotation=0.0,
-                simulated_translation=(0.0, 0.0)
-            )
-            
-            # Load as RuntimeLayout
-            self.runtime_layout = RuntimeLayout.from_json_file("config/runtime_layout.json")
-            
-            # DO NOT set Block 1 position here - user will do it in main window
-            
-            # Save (without Block 1 position)
-            self.runtime_layout.save_to_json("config/runtime_layout.json", include_design=True)
-            
-            print(f"✅ Layout created: {blocks_per_row}x{num_rows} blocks")
-            print(f"⚠️  Remember to set Block 1 position in the main window!")
-            
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Generation Failed",
-                f"Failed to generate layout:\n\n{e}"
-            )
-            import traceback
-            traceback.print_exc()
-    
+            try:
+                # Get parameters
+                blocks_per_row = self.field("blocks_per_row")
+                num_rows = self.field("num_rows")
+                block_size = self.field("block_size")
+                block_spacing = self.field("block_spacing")
+                total_blocks = blocks_per_row * num_rows
+                
+                print(f"[Wizard] Generating layout: {blocks_per_row}x{num_rows} = {total_blocks} blocks")
+                
+                # Get block assignments from wizard
+                block_assignments = self.ascii_page.block_assignments
+                ascii_files_dict = self.ascii_page.ascii_files
+                
+                if not block_assignments:
+                    raise ValueError("No ASCII files assigned to blocks")
+                
+                # Build ASCII file list (one per block)
+                ascii_file_list = []
+                for block_id in range(1, total_blocks + 1):
+                    if block_id in block_assignments:
+                        ascii_file_list.append(block_assignments[block_id])
+                    else:
+                        # Use first available ASCII if not assigned
+                        if ascii_files_dict:
+                            first_file = list(ascii_files_dict.keys())[0]
+                            ascii_file_list.append(first_file)
+                            print(f"[Wizard] Warning: Block {block_id} not assigned, using {Path(first_file).name}")
+                        else:
+                            raise ValueError(f"Block {block_id} has no ASCII file assigned")
+                
+                print(f"[Wizard] ASCII files assigned:")
+                for bid, afile in enumerate(ascii_file_list, start=1):
+                    print(f"  Block {bid}: {Path(afile).name}")
+                
+                # Generate layout using layout_config_generator
+                from config.layout_config_generator import generate_layout_config_v3
+                from config.layout_models import RuntimeLayout
+                
+                output_path = "config/runtime_layout.json"
+                
+                _ = generate_layout_config_v3(
+                    ascii_files=ascii_file_list,  # NOW PASS THE FULL LIST
+                    output_file=output_path,
+                    blocks_per_row=blocks_per_row,
+                    num_rows=num_rows,
+                    block_size=block_size,
+                    block_spacing=block_spacing,
+                    simulated_rotation=0.0,
+                    simulated_translation=(0.0, 0.0)
+                )
+                
+                # Load as RuntimeLayout
+                self.runtime_layout = RuntimeLayout.from_json_file(output_path)
+                
+                # DO NOT set Block 1 position here - user will do it in main window
+                
+                # Save (without Block 1 position)
+                self.runtime_layout.save_to_json(output_path, include_design=True)
+                
+                print(f"✅ Layout created: {blocks_per_row}x{num_rows} blocks")
+                print(f"⚠️  Remember to set Block 1 position in the main window!")
+                
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Generation Failed",
+                    f"Failed to generate layout:\n\n{e}"
+                )
+                import traceback
+                traceback.print_exc()
+
     def get_runtime_layout(self):
         """Get generated RuntimeLayout."""
         return self.runtime_layout

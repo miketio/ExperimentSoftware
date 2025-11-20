@@ -845,6 +845,7 @@ class RuntimeLayout:
     # SERIALIZATION
     # ========================================================================
     # UPDATE to_dict method - ADD THIS SECTION
+
     def to_dict(self, include_design: bool = True) -> Dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
         result = {
@@ -884,8 +885,8 @@ class RuntimeLayout:
         
         if measured_cal:
             result['measured_calibration'] = measured_cal
-        
-        # ✅ ADD: Save captured fiducials
+            
+        # Save captured fiducials
         if self.captured_fiducials:
             result['captured_fiducials'] = {
                 str(block_id): {corner: list(pos) for corner, pos in corners.items()}
@@ -893,49 +894,25 @@ class RuntimeLayout:
             }
         
         return result
-    
-    # config/layout_models.py - UPDATE save_to_json method
 
     def save_to_json(self, filepath: str, include_design: bool = True, indent: int = 2):
         """
         Save runtime layout to JSON file.
         
-        CRITICAL: When saving RuntimeLayout, we save ONLY measurements,
-        NOT the full design (to avoid overwriting source).
+        Args:
+            filepath: Output path
+            include_design: If True (default), saves the full design + measurements.
+                            This ensures the file can be reloaded as a Layout.
         """
         path = Path(filepath)
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        # RuntimeLayout should ALWAYS save measurements only
-        # Design stays in the source file
-        data = {
-            'design_name': self.design_name,
-            'version': self.version,
-            'saved_timestamp': datetime.now().isoformat(),
-            'source_design_file': self.metadata.get('source_file', 'unknown')
-        }
+        # UPDATED: Use to_dict to ensure consistent structure (including 'block_layout')
+        data = self.to_dict(include_design=include_design)
         
-        # Block 1 position
-        if self.block_1_stage_position_um is not None:
-            data['block_1_stage_position_um'] = list(self.block_1_stage_position_um)
-        
-        # Measured calibration
-        measured_cal = {}
-        
-        if self.measured_global_transform:
-            measured_cal['global_transform'] = self.measured_global_transform.to_dict()
-        
-        if self.measured_block_transforms:
-            measured_cal['block_transforms'] = {
-                str(block_id): trans.to_dict()
-                for block_id, trans in self.measured_block_transforms.items()
-            }
-        
-        if self.measurement_log:
-            measured_cal['measurement_log'] = self.measurement_log
-        
-        if measured_cal:
-            data['measured_calibration'] = measured_cal
+        # Add source file ref if not present
+        if 'source_design_file' not in data:
+             data['source_design_file'] = self.metadata.get('source_file', 'unknown')
         
         with open(path, 'w') as f:
             json.dump(data, f, indent=indent)

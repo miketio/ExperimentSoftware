@@ -171,8 +171,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(top_splitter, stretch=3)
         
         # Middle section: Block grid
-        self.block_grid = BlockGridWidget(self.state, self.signals)
-        main_layout.addWidget(self.block_grid, stretch=1)
+        self.block_grid = BlockGridWidget(self.state, self.signals, self.runtime_layout)
+        # Limit maximum height so it doesn't get too huge on tall screens
+        self.block_grid.setMaximumHeight(350)
+
+        main_layout.addWidget(self.block_grid, stretch=2)
         
         # Bottom section: Waveguide panel
         self.waveguide_panel = WaveguidePanelWidget(
@@ -280,7 +283,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(control_tabs, stretch=2)
         
         # Block grid
-        self.block_grid = BlockGridWidget(self.state, self.signals)
+        self.block_grid = BlockGridWidget(self.state, self.signals, self.runtime_layout)
         right_layout.addWidget(self.block_grid, stretch=1)
         
         main_splitter.addWidget(right_widget)

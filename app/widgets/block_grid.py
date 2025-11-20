@@ -1,6 +1,6 @@
-"""Block Selection Grid - 5×4 grid of blocks."""
+"""Block Selection Grid - Dynamic grid of blocks."""
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QPushButton, QGroupBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QPushButton, QGroupBox, QScrollArea
 from PyQt6.QtCore import Qt
 from app.system_state import AlignmentStatus
 
@@ -54,12 +54,14 @@ class BlockButton(QPushButton):
 
 
 class BlockGridWidget(QWidget):
-    """5×4 grid for block selection."""
+    """Dynamic grid for block selection based on layout."""
     
-    def __init__(self, state, signals, parent=None):
+    def __init__(self, state, signals, layout_model, parent=None):
+        # layout_model can be RuntimeLayout or CameraLayout
         super().__init__(parent)
         self.state = state
         self.signals = signals
+        self.layout_model = layout_model
         self.buttons = {}
         
         self._init_ui()
@@ -68,31 +70,47 @@ class BlockGridWidget(QWidget):
     
     def _init_ui(self):
         """Initialize UI."""
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        main_layout = QVBoxLayout()
+        self.setLayout(main_layout)
         
         group = QGroupBox("Block Selection")
         group_layout = QVBoxLayout()
         
-        # Grid
-        grid = QGridLayout()
+        # Scroll Area in case grid is huge
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background-color: transparent; border: none;")
+        
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
         grid.setSpacing(5)
         
-        for row in range(4):
-            for col in range(5):
-                block_id = row * 5 + col + 1
-                btn = BlockButton(block_id)
-                btn.clicked.connect(lambda checked, bid=block_id: self._on_block_clicked(bid))
-                self.buttons[block_id] = btn
-                grid.addWidget(btn, row, col)
+        # Dynamic Grid Generation
+        cols = self.layout_model.block_layout.blocks_per_row
+        rows = self.layout_model.block_layout.num_rows
         
-        group_layout.addLayout(grid)
+        # Ensure we respect 1-based ID Logic from generator
+        for r in range(rows):
+            for c in range(cols):
+                # Calculate ID: row * width + col + 1
+                block_id = r * cols + c + 1
+                
+                # Only add button if block exists in layout (safety check)
+                if block_id in self.layout_model.blocks:
+                    btn = BlockButton(block_id)
+                    btn.clicked.connect(lambda checked, bid=block_id: self._on_block_clicked(bid))
+                    self.buttons[block_id] = btn
+                    grid.addWidget(btn, r, c)
+        
+        # Add grid container to scroll area
+        scroll.setWidget(grid_container)
+        group_layout.addWidget(scroll)
         
         # Legend
         legend_layout = QHBoxLayout()
-        legend_layout.addWidget(QLabel("⬜ Not calibrated"))
-        legend_layout.addWidget(QLabel("🟨 Global only"))
-        legend_layout.addWidget(QLabel("🟩 Block calibrated"))
+        legend_layout.addWidget(QLabel("⬜ Not calib"))
+        legend_layout.addWidget(QLabel("🟨 Global"))
+        legend_layout.addWidget(QLabel("🟩 Block calib"))
         legend_layout.addWidget(QLabel("🔴 Failed"))
         legend_layout.addStretch()
         group_layout.addLayout(legend_layout)
@@ -101,8 +119,11 @@ class BlockGridWidget(QWidget):
         self.info_label = QLabel("No block selected")
         group_layout.addWidget(self.info_label)
         
+        # === CHANGED: Add stretch here to push everything up ===
+        group_layout.addStretch()
+        
         group.setLayout(group_layout)
-        layout.addWidget(group)
+        main_layout.addWidget(group)
     
     def _connect_signals(self):
         """Connect signals."""
@@ -119,16 +140,16 @@ class BlockGridWidget(QWidget):
         for bid, btn in self.buttons.items():
             btn.set_selected(bid == block_id)
         
-        block_state = self.state.get_block_state(block_id)
-        self.info_label.setText(
-            f"Block {block_id} selected | "
-            f"Status: {block_state.status.name} | "
-            f"Error: {block_state.calibration_error:.3f} µm" if block_state.calibration_error else ""
-        )
+        if self.state:
+            block_state = self.state.get_block_state(block_id)
+            self.info_label.setText(
+                f"Block {block_id} selected | "
+                f"Status: {block_state.status.name}"
+            )
     
     def _update_button(self, block_id: int):
         """Update single button status."""
-        if block_id in self.buttons:
+        if block_id in self.buttons and self.state:
             state = self.state.get_block_state(block_id)
             self.buttons[block_id].set_status(state.status)
     
