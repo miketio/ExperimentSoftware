@@ -7,7 +7,7 @@ Launch the PyQt6 application with hardware initialization.
 
 import sys
 from pathlib import Path
-from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton, QRadioButton, QButtonGroup, QFileDialog
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 from PyQt6.QtCore import Qt
 import json
 
@@ -27,6 +27,8 @@ class HardwareSelectionDialog(QDialog):
     
     def __init__(self, availability: dict, parent=None):
         super().__init__(parent)
+        from PyQt6.QtWidgets import QVBoxLayout, QLabel, QRadioButton, QButtonGroup, QPushButton
+        
         self.setWindowTitle("Hardware Selection")
         self.selected_mode = None
         
@@ -150,73 +152,109 @@ def main():
     state.hardware_mode = HardwareMode.MOCK if selected_mode == "mock" else HardwareMode.REAL
     state.camera_connected = True
     state.stage_connected = True
-    state.camera.um_per_pixel = hw_manager.get_camera().um_per_pixel
+    
+    # Get um_per_pixel from camera (standardized)
+    camera = hw_manager.get_camera()
+    if hasattr(camera, 'um_per_pixel'):
+        state.camera.um_per_pixel = camera.um_per_pixel
+        print(f"✅ Camera pixel size: {camera.um_per_pixel:.3f} µm/pixel")
     
     signals = SystemSignals()
     
     # ========================================================================
-    # LAYOUT LOADING / CREATION
+    # LAYOUT SELECTION - NEW DIALOG
     # ========================================================================
     
+    from app.dialogs.layout_selection_dialog import LayoutSelectionDialog
     
-    DESIGN_FILE = "config/mock_layout.json"      # SOURCE (never modified)
-    RUNTIME_FILE = "config/runtime_state.json"   # MEASUREMENTS ONLY
+    layout_dialog = LayoutSelectionDialog()
+    if layout_dialog.exec() != QDialog.DialogCode.Accepted:
+        print("\nLayout selection cancelled by user")
+        hw_manager.shutdown()
+        return 0
+    
+    layout_mode, layout_file = layout_dialog.get_selection()
+    print(f"\nLayout mode: {layout_mode}")
     
     runtime_layout = None
+    RUNTIME_FILE = "config/runtime_state.json"
     
-    # Check if design source exists
-    if not Path(DESIGN_FILE).exists():
-        print(f"ERROR: Design file not found: {DESIGN_FILE}")
-        QMessageBox.critical(
-            None,
-            "Design File Missing",
-            f"Design file not found: {DESIGN_FILE}\n\n"
-            "Please create a layout first.\n\n"
-            "Application will exit."
-        )
-        return 1
-    
-    # Load design
-    try:
-        from config.layout_models import RuntimeLayout
-        runtime_layout = RuntimeLayout.from_json_file(DESIGN_FILE)
-        runtime_layout.metadata['source_file'] = DESIGN_FILE
-        print(f"✅ Loaded design: {runtime_layout.design_name}")
-    except Exception as e:
-        print(f"ERROR loading design: {e}")
-        QMessageBox.critical(
-            None,
-            "Design Load Failed",
-            f"Failed to load design:\n\n{e}\n\nApplication will exit."
-        )
-        return 1
-    
-    # Load runtime state if exists
-    if Path(RUNTIME_FILE).exists():
-        print(f"\nFound runtime state: {RUNTIME_FILE}")
+    if layout_mode == "existing":
+        # Load from existing file
+        print(f"Loading layout from: {layout_file}")
+        
         try:
-            with open(RUNTIME_FILE, 'r') as f:
-                runtime_data = json.load(f)
+            from config.layout_models import RuntimeLayout
+            runtime_layout = RuntimeLayout.from_json_file(layout_file)
+            runtime_layout.metadata['source_file'] = layout_file
+            print(f"✅ Loaded design: {runtime_layout.design_name}")
             
-            # Apply Block 1 position
-            if 'block_1_stage_position_um' in runtime_data:
-                pos = runtime_data['block_1_stage_position_um']
-                runtime_layout.set_block_1_position(pos[0], pos[1])
-                print(f"  ✅ Block 1 position: Y={pos[0]:.3f}, Z={pos[1]:.3f} µm")
+            # Load runtime state if exists
+            if Path(RUNTIME_FILE).exists():
+                print(f"\nFound runtime state: {RUNTIME_FILE}")
+                try:
+                    with open(RUNTIME_FILE, 'r') as f:
+                        runtime_data = json.load(f)
+                    
+                    # Apply Block 1 position
+                    if 'block_1_stage_position_um' in runtime_data:
+                        pos = runtime_data['block_1_stage_position_um']
+                        runtime_layout.set_block_1_position(pos[0], pos[1])
+                        print(f"  ✅ Block 1 position: Y={pos[0]:.3f}, Z={pos[1]:.3f} µm")
+                    
+                    # Apply calibration
+                    if 'measured_calibration' in runtime_data:
+                        runtime_layout._load_measured_calibration(runtime_data['measured_calibration'])
+                        print(f"  ✅ Loaded calibration data")
+                
+                except Exception as e:
+                    print(f"  ⚠️ Failed to load runtime state: {e}")
             
-            # Apply calibration
-            if 'measured_calibration' in runtime_data:
-                runtime_layout._load_measured_calibration(runtime_data['measured_calibration'])
-                print(f"  ✅ Loaded calibration data")
+            # Default Block 1 position if not set
+            if not runtime_layout.has_block_1_position():
+                print("\n⚠️ Block 1 position not set - defaulting to (0, 0)")
+                print("   Use menu: Setup > Set Block 1 Position")
+                runtime_layout.set_block_1_position(0.0, 0.0)
         
         except Exception as e:
-            print(f"  ⚠️ Failed to load runtime state: {e}")
+            QMessageBox.critical(
+                None,
+                "Layout Load Failed",
+                f"Failed to load layout:\n\n{e}\n\nApplication will exit."
+            )
+            print(f"ERROR: {e}")
+            hw_manager.shutdown()
+            return 1
     
-    # Default Block 1 position to (0,0) if not set
-    if not runtime_layout.has_block_1_position():
-        print("\n⚠️ Block 1 position not set - defaulting to (0, 0)")
-        print("   Use menu: Calibration > Set Block 1 Position")
-        runtime_layout.set_block_1_position(0.0, 0.0)
+    elif layout_mode == "wizard":
+        # Launch wizard
+        print("Launching Layout Wizard...")
+        
+        from app.widgets.layout_wizard import LayoutWizard
+        
+        wizard = LayoutWizard(state)
+        if wizard.exec() != QDialog.DialogCode.Accepted:
+            print("\nWizard cancelled by user")
+            hw_manager.shutdown()
+            return 0
+        
+        runtime_layout = wizard.get_runtime_layout()
+        
+        if runtime_layout is None:
+            QMessageBox.critical(
+                None,
+                "Layout Creation Failed",
+                "Failed to create layout from wizard.\n\nApplication will exit."
+            )
+            hw_manager.shutdown()
+            return 1
+        
+        print(f"✅ Created layout: {runtime_layout.design_name}")
+    
+    else:
+        print(f"ERROR: Unknown layout mode: {layout_mode}")
+        hw_manager.shutdown()
+        return 1
     
     # ========================================================================
     # LAUNCH MAIN WINDOW

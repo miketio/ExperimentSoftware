@@ -1,10 +1,11 @@
-# app/widgets/layout_wizard.py
+# app/widgets/layout_wizard.py - UPDATED (No Block 1 Position Step)
 """
 Layout Wizard - Multi-step layout creation
 
 Step 1: Block array parameters
 Step 2: ASCII file assignment
-Step 3: Block 1 position
+
+Block 1 position is now set separately in the main window.
 """
 
 from PyQt6.QtWidgets import (
@@ -52,7 +53,7 @@ class ArrayParametersPage(QWizardPage):
         self.block_size.setRange(50, 1000)
         self.block_size.setValue(200)
         self.block_size.setSuffix(" µm")
-        self.registerField("block_size", self.block_size)
+        self.registerField("block_size", self.block_size, "value")
         params.addWidget(self.block_size, 2, 1)
         
         params.addWidget(QLabel("Block spacing:"), 3, 0)
@@ -60,7 +61,7 @@ class ArrayParametersPage(QWizardPage):
         self.block_spacing.setRange(100, 2000)
         self.block_spacing.setValue(300)
         self.block_spacing.setSuffix(" µm")
-        self.registerField("block_spacing", self.block_spacing)
+        self.registerField("block_spacing", self.block_spacing, "value")
         params.addWidget(self.block_spacing, 3, 1)
         
         layout.addLayout(params)
@@ -76,7 +77,6 @@ class ArrayParametersPage(QWizardPage):
         
         layout.addStretch()
         self.setLayout(layout)
-
 
 
 class AsciiAssignmentPage(QWizardPage):
@@ -288,7 +288,7 @@ class AsciiAssignmentPage(QWizardPage):
 
 
 class BlockGridWidget(QGraphicsView):
-    """FIXED: Click-based assignment instead of drag-drop."""
+    """Click-based assignment grid."""
     
     def __init__(self, parent_page):
         super().__init__()
@@ -372,120 +372,9 @@ class BlockGridWidget(QGraphicsView):
             label.setPlainText("")
             rect.setBrush(QBrush(QColor(220, 220, 220)))  # Gray
 
-class Block1PositionPage(QWizardPage):
-    """Step 3: Set Block 1 initial position."""
-    
-    def __init__(self, state, parent=None):
-        super().__init__(parent)
-        self.state = state
-        
-        self.setTitle("Block 1 Initial Position")
-        self.setSubTitle("Set the stage coordinates of Block 1 center")
-        
-        layout = QVBoxLayout()
-        
-        # Warning
-        warning = QLabel(
-            "⭐ <b>CRITICAL STEP</b> ⭐\n\n"
-            "Before running alignment, you must tell the system where Block 1 is located.\n\n"
-            "1. Use stage controls to move to Block 1 center\n"
-            "2. Click 'Use Current Position' to capture coordinates\n"
-            "3. Or enter coordinates manually if you know them"
-        )
-        warning.setStyleSheet("QLabel { background-color: #FFF3CD; padding: 10px; border: 2px solid #FF6B6B; }")
-        warning.setWordWrap(True)
-        layout.addWidget(warning)
-        
-        # Current position display
-        current_group = QVBoxLayout()
-        current_group.addWidget(QLabel("<b>Current Stage Position:</b>"))
-        
-        self.current_pos_label = QLabel("Y = ?.??? µm\nZ = ?.??? µm")
-        self.current_pos_label.setStyleSheet("QLabel { font-family: monospace; font-size: 14pt; }")
-        current_group.addWidget(self.current_pos_label)
-        
-        btn_use_current = QPushButton("✓ Use Current Position")
-        btn_use_current.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 10px; }")
-        btn_use_current.clicked.connect(self._use_current_position)
-        current_group.addWidget(btn_use_current)
-        
-        layout.addLayout(current_group)
-        
-        # Manual entry
-        manual_group = QVBoxLayout()
-        manual_group.addWidget(QLabel("<b>Or Enter Manually:</b>"))
-        
-        manual_layout = QHBoxLayout()
-        manual_layout.addWidget(QLabel("Y:"))
-        
-        self.y_spin = QDoubleSpinBox()
-        self.y_spin.setRange(-100000, 100000)
-        self.y_spin.setDecimals(3)
-        self.y_spin.setSuffix(" µm")
-        self.registerField("block1_y*", self.y_spin)  # Required field
-        manual_layout.addWidget(self.y_spin)
-        
-        manual_layout.addWidget(QLabel("Z:"))
-        
-        self.z_spin = QDoubleSpinBox()
-        self.z_spin.setRange(-100000, 100000)
-        self.z_spin.setDecimals(3)
-        self.z_spin.setSuffix(" µm")
-        self.registerField("block1_z*", self.z_spin)  # Required field
-        manual_layout.addWidget(self.z_spin)
-        
-        manual_group.addLayout(manual_layout)
-        layout.addLayout(manual_group)
-        
-        layout.addStretch()
-        self.setLayout(layout)
-        
-        # Update timer
-        from PyQt6.QtCore import QTimer
-        self.timer = QTimer()
-        self.timer.timeout.connect(self._update_current_position)
-        self.timer.start(200)  # Update every 200ms
-    
-    def _update_current_position(self):
-        """Update current position display."""
-        if self.state:
-            y, z = self.state.stage_position['y'], self.state.stage_position['z']
-            self.current_pos_label.setText(f"Y = {y:.3f} µm\nZ = {z:.3f} µm")
-    
-    def _use_current_position(self):
-        """Capture current stage position."""
-        y = self.state.stage_position['y']
-        z = self.state.stage_position['z']
-        
-        self.y_spin.setValue(y)
-        self.z_spin.setValue(z)
-        
-        QMessageBox.information(
-            self,
-            "Position Captured",
-            f"Block 1 position set to:\n\nY = {y:.3f} µm\nZ = {z:.3f} µm"
-        )
-    
-    def validatePage(self):
-        """Check if position is reasonable."""
-        y = self.y_spin.value()
-        z = self.z_spin.value()
-        
-        if y == 0 and z == 0:
-            reply = QMessageBox.warning(
-                self,
-                "Position Not Set",
-                "Block 1 position is (0, 0).\n\n"
-                "This is likely incorrect. Did you forget to capture the position?",
-                QMessageBox.StandardButton.Ok
-            )
-            return False
-        
-        return True
-
 
 class LayoutWizard(QWizard):
-    """Main wizard for layout creation."""
+    """Main wizard for layout creation (NO Block 1 position step)."""
     
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -496,11 +385,10 @@ class LayoutWizard(QWizard):
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.setMinimumSize(800, 600)
         
-        # Add pages
+        # Add pages (only 2 steps now)
         self.addPage(ArrayParametersPage())
         self.ascii_page = AsciiAssignmentPage()
         self.addPage(self.ascii_page)
-        self.addPage(Block1PositionPage(state))
         
         # Connect finish
         self.finished.connect(self._on_finish)
@@ -516,13 +404,8 @@ class LayoutWizard(QWizard):
             num_rows = self.field("num_rows")
             block_size = self.field("block_size")
             block_spacing = self.field("block_spacing")
-            block1_y = self.field("block1_y")
-            block1_z = self.field("block1_z")
-            
+            print(f"DEBUG: Blocks/Row: {blocks_per_row}, Rows: {num_rows}, Size: {block_size}, Spacing: {block_spacing}")
             # Generate RuntimeLayout from ASCII assignments
-            # TODO: Implement multi-ASCII layout generation
-            # For now, use first ASCII file for all blocks
-            
             ascii_files = list(self.ascii_page.ascii_files.keys())
             if not ascii_files:
                 raise ValueError("No ASCII files assigned")
@@ -532,7 +415,7 @@ class LayoutWizard(QWizard):
             from config.layout_models import RuntimeLayout
             
             # Generate with first ASCII file (temporary)
-            layout_dict = generate_layout_config_v3(
+            _ = generate_layout_config_v3(
                 ascii_file=ascii_files[0],
                 output_file="config/runtime_layout.json",
                 blocks_per_row=blocks_per_row,
@@ -546,14 +429,13 @@ class LayoutWizard(QWizard):
             # Load as RuntimeLayout
             self.runtime_layout = RuntimeLayout.from_json_file("config/runtime_layout.json")
             
-            # Set Block 1 position
-            self.runtime_layout.set_block_1_position(block1_y, block1_z)
+            # DO NOT set Block 1 position here - user will do it in main window
             
-            # Save
+            # Save (without Block 1 position)
             self.runtime_layout.save_to_json("config/runtime_layout.json", include_design=True)
             
             print(f"✅ Layout created: {blocks_per_row}x{num_rows} blocks")
-            print(f"   Block 1 position: Y={block1_y:.3f}, Z={block1_z:.3f} µm")
+            print(f"⚠️  Remember to set Block 1 position in the main window!")
             
         except Exception as e:
             QMessageBox.critical(

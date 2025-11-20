@@ -359,7 +359,9 @@ class CameraViewWidget(QWidget):
         
         if self.state.camera.show_scale_bar:
             scale_bar_um = 50.0
-            um_per_pixel = 0.3
+            # AFTER (CORRECT):
+            um_per_pixel = self.state.camera.um_per_pixel
+            
             scale_bar_pixels = int(scale_bar_um / um_per_pixel)
             
             bar_x = display_w - scale_bar_pixels - 20

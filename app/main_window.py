@@ -436,6 +436,25 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.scalebar_action)
         
         # ========================================
+        # CAMERA MENU (NEW)
+        # ========================================
+        camera_menu = menubar.addMenu("&Camera")
+
+        # Pixel size configuration
+        pixel_size_action = QAction("Set Pixel Size (µm/pixel)...", self)
+        pixel_size_action.setShortcut("Ctrl+Shift+P")
+        pixel_size_action.setToolTip("Configure camera pixel size calibration")
+        pixel_size_action.triggered.connect(self._set_pixel_size)
+        camera_menu.addAction(pixel_size_action)
+
+        camera_menu.addSeparator()
+
+        # Camera info
+        camera_info_action = QAction("Camera Information...", self)
+        camera_info_action.triggered.connect(self._show_camera_info)
+        camera_menu.addAction(camera_info_action)
+
+        # ========================================
         # TOOLS MENU
         # ========================================
         tools_menu = menubar.addMenu("&Tools")
@@ -733,3 +752,85 @@ class MainWindow(QMainWindow):
             self.camera_thread = None
         
         self.position_timer.stop()
+
+
+    def _set_pixel_size(self):
+        """Open pixel size configuration dialog."""
+        from app.dialogs.pixel_size_dialog import PixelSizeDialog
+        
+        # Get current value from camera
+        current_value = self.camera.um_per_pixel if hasattr(self.camera, 'um_per_pixel') else 0.3
+        
+        dialog = PixelSizeDialog(current_value, parent=self)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_value = dialog.get_value()
+            
+            # Update camera
+            if hasattr(self.camera, 'um_per_pixel'):
+                self.camera.um_per_pixel = new_value
+            
+            # Update system state (SINGLE SOURCE OF TRUTH)
+            self.state.camera.um_per_pixel = new_value
+            
+            # Emit signal for any listeners
+            self.signals.status_message.emit(
+                f"Camera pixel size set to {new_value:.6f} µm/pixel"
+            )
+            
+            # Update camera view overlays
+            self.camera_view.update_overlay_settings()
+            
+            print(f"[MainWindow] Pixel size updated: {new_value:.6f} µm/pixel")
+
+    def _show_camera_info(self):
+        """Show camera information dialog."""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        info_text = "<h3>Camera Information</h3>"
+        
+        if self.camera is not None:
+            info_text += f"<p><b>Type:</b> {type(self.camera).__name__}</p>"
+            
+            if hasattr(self.camera, 'um_per_pixel'):
+                info_text += f"<p><b>Pixel Size:</b> {self.camera.um_per_pixel:.6f} µm/pixel</p>"
+            
+            if hasattr(self.camera, 'get_sensor_size'):
+                try:
+                    w, h = self.camera.get_sensor_size()
+                    info_text += f"<p><b>Sensor Size:</b> {w} × {h} pixels</p>"
+                    
+                    if hasattr(self.camera, 'um_per_pixel'):
+                        fov_w = w * self.camera.um_per_pixel
+                        fov_h = h * self.camera.um_per_pixel
+                        info_text += f"<p><b>Field of View:</b> {fov_w:.1f} × {fov_h:.1f} µm</p>"
+                except:
+                    pass
+            
+            if hasattr(self.camera, 'roi') and self.camera.roi is not None:
+                roi = self.camera.roi
+                info_text += f"<p><b>Current ROI:</b> ({roi[0]}, {roi[1]}, {roi[2]}, {roi[3]})</p>"
+            
+            info_text += f"<p><b>Connected:</b> {'Yes' if self.state.camera_connected else 'No'}</p>"
+        else:
+            info_text += "<p>No camera connected</p>"
+        
+        QMessageBox.information(self, "Camera Information", info_text)
+
+
+    # ========================================
+    # STANDARDIZE um_per_pixel ACCESS
+    # ========================================
+
+    # CREATE a new method to get um_per_pixel consistently:
+
+    def get_um_per_pixel(self) -> float:
+        """
+        Get camera pixel size (µm/pixel).
+        
+        SINGLE SOURCE OF TRUTH: Always get from state.camera.um_per_pixel
+        
+        Returns:
+            float: Pixel size in micrometers per pixel
+        """
+        return self.state.camera.um_per_pixel
