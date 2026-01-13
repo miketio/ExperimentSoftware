@@ -1,0 +1,31 @@
+from pylablib.devices import SmarAct
+
+def check_hcu_connection():
+    # 1. List all detected SCU/HCU/CU devices
+    devices = SmarAct.list_scu_devices()
+    
+    if not devices:
+        print("No SmarAct HCU/SCU devices found.")
+        return
+
+    print(f"Found {len(devices)} device(s):")
+    for dev in devices:
+        print(f" - Index: {dev.device_id}, Firmware: {dev.firmware_version}")
+
+    # 2. Try to connect to the first device (index 0)
+    try:
+        # Use SCU class for HCU/CU/SCU controllers
+        # idx=0 refers to the first device found
+        with SmarAct.SCU(idx=0) as controller:
+            print("\nSuccessfully connected to the HCU controller!")
+            
+            # Optional: Get basic info to verify it's working
+            # include="all" or a priority level (e.g., 0)
+            info = controller.get_full_info()
+            print(f"Device Info: {info}")
+            
+    except Exception as e:
+        print(f"\nCould not establish a connection: {e}")
+
+if __name__ == "__main__":
+    check_hcu_connection()

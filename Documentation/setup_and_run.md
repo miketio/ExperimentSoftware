@@ -178,40 +178,67 @@ Interactive command-line demo.
 
 ## 📁 Recommended Project Structure
 
-```
 microscopy-control/
-├── venv/                          # Virtual environment
+├── venv/                         
 │
-├── Hardware Control
-│   ├── dual_thread_with_api.py    # Main application (USE THIS)
-│   ├── stage_commands.py          # Command processor
-│   ├── xyzStageApp.py            # Stage app
-│   ├── smartactStage.py          # SmarAct driver
-│   ├── andorCameraApp.py         # Camera app
-│   └── zylaCamera.py             # Zyla driver
+├── camera_control/                # Hardware control: cameras
+│   ├── andor_camera_app.py
+│   ├── andor_camera_base.py
+│   ├── mock_camera.py
+│   ├── run_tests.py
+│   └── zyla_camera.py
 │
-├── REST API
-│   ├── api_server.py             # FastAPI server
-│   ├── api_models.py             # Pydantic models
-│   └── test_api_client.py        # Client library
+├── setup_motor/                   # Hardware control: stages
+│   ├── smartact_stage.py
+│   ├── stage_adapter.py
+│   ├── xyz_stage_app.py
+│   └── xyz_stage_base.py
 │
-├── Base Classes
-│   ├── xyzStageBase.py           # Stage interface
-│   └── andorCameraBase.py        # Camera interface
+├── controllers/                   # Application controllers
+│   ├── alignment_controller.py
+│   ├── alignment_worker.py
+│   ├── autofocus_controller.py
+│   ├── camera_stream.py
+│   ├── hardware_manager.py
+│   ├── navigation_controller.py
+│   └── __init__.py
 │
-├── Testing
-│   ├── mockStage.py              # Mock hardware
-│   ├── exampleUsage.py           # Examples
-│   └── run_tests.py              # Tests
+├── dialogs/                       # UI dialogs
+│   ├── layout_selection_dialog.py
+│   └── pixel_size_dialog.py
 │
-├── Agent Framework (Future)
-│   ├── basic_agent_create.py
-│   └── ...
+├── widgets/                       # Qt widgets & panels
+│   ├── alignment_progress_dialog.py
+│   ├── autofocus_dialog.py
+│   ├── automated_alignment_panel.py
+│   ├── beam_position_dialog.py
+│   ├── block_grid.py
+│   ├── camera_view.py
+│   ├── layout_wizard.py
+│   ├── manual_calibration_panel.py
+│   ├── setup_panel.py
+│   ├── stage_control.py
+│   ├── status_bar.py
+│   └── waveguide_panel.py
 │
-└── Documentation
-    ├── README.md
-    ├── API_QUICKSTART.md
-    └── SETUP_AND_RUN.md
+├── alignment_system/              # Alignment logic + image processing
+│   ├── alignment_search.py
+│   ├── ascii_parser.py
+│   ├── ascii_sample.ASC
+│   ├── coordinate_transform_v3.py
+│   ├── cv_tools.py
+│   ├── gmarker_detector.py
+│   ├── hierarchical_alignment.py
+│   └── validate_coordinate_transform.py
+│
+├── config/                        # Layout/configuration files
+│   ├── layout_config_generator.py
+│   ├── layout_models.py
+│   ├── mock_layout.json
+│   └── runtime_layout.json
+
+
+
 ```
 
 ---

@@ -1,7 +1,7 @@
 {
   "design_name": "ArrayD_QuasiPeriodic_20Blocks",
   "version": "2.1",
-  "saved_timestamp": "2025-11-20T18:18:50.699406",
+  "saved_timestamp": "2025-11-20T18:38:28.052983",
   "coordinate_system": {
     "description": "All coordinates in micrometers (\u00b5m).",
     "origin": "Bottom-left corner of Block 1 at stage (0, 0)",

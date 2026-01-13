@@ -764,7 +764,7 @@ class MainWindow(QMainWindow):
         # Get current value from camera
         current_value = self.camera.um_per_pixel if hasattr(self.camera, 'um_per_pixel') else 0.3
         
-        dialog = PixelSizeDialog(current_value, parent=self)
+        dialog = PixelSizeDialog(current_value,parent=self)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_value = dialog.get_value()
