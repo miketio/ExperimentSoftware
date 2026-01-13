@@ -1,9 +1,11 @@
 """
-Main Application Window - WITH RESPONSIVE LANDSCAPE/PORTRAIT LAYOUTS
+Main Application Window - WITH K-FILTER SUPPORT
 
 Automatically detects screen orientation and applies appropriate layout:
 - Portrait (1080×1920): Camera top, controls below, block grid, waveguide table
 - Landscape (1920×1080): Camera + table LEFT, controls + grid RIGHT
+
+Includes K-space filter control (mock and real modes).
 """
 
 from PyQt6.QtWidgets import (
@@ -28,11 +30,13 @@ from app.widgets.status_bar import CustomStatusBar
 
 class MainWindow(QMainWindow):
     """
-    Main application window with responsive layout.
+    Main application window with responsive layout + K-filter support.
     
     Supports two modes:
     1. Portrait: Traditional stacked layout
     2. Landscape: Side-by-side layout optimized for wide screens
+    
+    K-filter panel appears in both modes (mock or real).
     """
     
     def __init__(
@@ -67,7 +71,6 @@ class MainWindow(QMainWindow):
         # Setup UI
         self._detect_and_apply_layout()
         self._create_menu_bar()
-
         self._connect_signals()
         self._start_camera_stream()
         self._start_position_updates()
@@ -123,6 +126,25 @@ class MainWindow(QMainWindow):
             autofocus_controller=self.autofocus_controller
         )
         
+        # ✅ K-FILTER CONTROLLER (mock or real)
+        filter_stage = self.hw_manager.get_filter_stage()
+        if filter_stage is not None:
+            print("[MainWindow] Initializing REAL filter controller")
+            from app.controllers.filter_controller import FilterController
+            self.filter_controller = FilterController(
+                state=self.state,
+                signals=self.signals,
+                filter_stage=filter_stage,
+                camera=self.camera
+            )
+        else:
+            print("[MainWindow] Initializing MOCK filter controller")
+            from app.controllers.filter_controller import MockFilterController
+            self.filter_controller = MockFilterController(
+                state=self.state,
+                signals=self.signals
+            )
+        
         # Central widget
         central = QWidget()
         self.setCentralWidget(central)
@@ -143,26 +165,33 @@ class MainWindow(QMainWindow):
         self.stage_control = StageControlWidget(
             self.state, self.signals, self.stage
         )
-        control_tabs.addTab(self.stage_control, "Stage")  # SHORTENED
+        control_tabs.addTab(self.stage_control, "Stage")
         
         from app.widgets.automated_alignment_panel import AutomatedAlignmentPanel
         self.automated_alignment = AutomatedAlignmentPanel(
             self.state, self.signals, self.alignment_controller
         )
-        control_tabs.addTab(self.automated_alignment, "Auto Align")  # SHORTENED
+        control_tabs.addTab(self.automated_alignment, "Auto Align")
         
         from app.widgets.manual_calibration_panel import ManualCalibrationPanel
         self.manual_alignment = ManualCalibrationPanel(
             self.state, self.signals, self.runtime_layout, 
             self.alignment_controller
         )
-        control_tabs.addTab(self.manual_alignment, "Manual Calib")  # SHORTENED
+        control_tabs.addTab(self.manual_alignment, "Manual Calib")
         
         from app.widgets.setup_panel import SetupPanelWidget
         self.setup_panel = SetupPanelWidget(
             self.state, self.signals, self.runtime_layout, self.autofocus_controller
         )
         control_tabs.addTab(self.setup_panel, "Setup")
+        
+        # ✅ K-FILTER TAB (always present - mock or real)
+        from app.widgets.filter_panel import FilterPanelWidget
+        self.filter_panel = FilterPanelWidget(
+            self.state, self.signals, self.filter_controller
+        )
+        control_tabs.addTab(self.filter_panel, "K-Filter")
         
         top_splitter.addWidget(control_tabs)
         top_splitter.setStretchFactor(0, 3)
@@ -172,9 +201,7 @@ class MainWindow(QMainWindow):
         
         # Middle section: Block grid
         self.block_grid = BlockGridWidget(self.state, self.signals, self.runtime_layout)
-        # Limit maximum height so it doesn't get too huge on tall screens
         self.block_grid.setMaximumHeight(350)
-
         main_layout.addWidget(self.block_grid, stretch=2)
         
         # Bottom section: Waveguide panel
@@ -214,6 +241,25 @@ class MainWindow(QMainWindow):
             alignment_system=self.alignment_controller.alignment_system,
             autofocus_controller=self.autofocus_controller
         )
+        
+        # ✅ K-FILTER CONTROLLER (mock or real)
+        filter_stage = self.hw_manager.get_filter_stage()
+        if filter_stage is not None:
+            print("[MainWindow] Initializing REAL filter controller")
+            from app.controllers.filter_controller import FilterController
+            self.filter_controller = FilterController(
+                state=self.state,
+                signals=self.signals,
+                filter_stage=filter_stage,
+                camera=self.camera
+            )
+        else:
+            print("[MainWindow] Initializing MOCK filter controller")
+            from app.controllers.filter_controller import MockFilterController
+            self.filter_controller = MockFilterController(
+                state=self.state,
+                signals=self.signals
+            )
         
         # Central widget
         central = QWidget()
@@ -259,26 +305,33 @@ class MainWindow(QMainWindow):
         self.stage_control = StageControlWidget(
             self.state, self.signals, self.stage
         )
-        control_tabs.addTab(self.stage_control, "Stage")  # SHORTENED
+        control_tabs.addTab(self.stage_control, "Stage")
         
         from app.widgets.automated_alignment_panel import AutomatedAlignmentPanel
         self.automated_alignment = AutomatedAlignmentPanel(
             self.state, self.signals, self.alignment_controller
         )
-        control_tabs.addTab(self.automated_alignment, "Auto Align")  # SHORTENED
+        control_tabs.addTab(self.automated_alignment, "Auto Align")
         
         from app.widgets.manual_calibration_panel import ManualCalibrationPanel
         self.manual_alignment = ManualCalibrationPanel(
             self.state, self.signals, self.runtime_layout, 
             self.alignment_controller
         )
-        control_tabs.addTab(self.manual_alignment, "Manual Cal")  # SHORTENED
+        control_tabs.addTab(self.manual_alignment, "Manual Cal")
         
         from app.widgets.setup_panel import SetupPanelWidget
         self.setup_panel = SetupPanelWidget(
             self.state, self.signals, self.runtime_layout, self.autofocus_controller
         )
         control_tabs.addTab(self.setup_panel, "Setup")
+        
+        # ✅ K-FILTER TAB (always present - mock or real)
+        from app.widgets.filter_panel import FilterPanelWidget
+        self.filter_panel = FilterPanelWidget(
+            self.state, self.signals, self.filter_controller
+        )
+        control_tabs.addTab(self.filter_panel, "K-Filter")
         
         right_layout.addWidget(control_tabs, stretch=2)
         
@@ -439,7 +492,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.scalebar_action)
         
         # ========================================
-        # CAMERA MENU (NEW)
+        # CAMERA MENU
         # ========================================
         camera_menu = menubar.addMenu("&Camera")
 
@@ -523,30 +576,49 @@ class MainWindow(QMainWindow):
         )
         
         self.signals.block_alignment_complete.connect(
-            lambda bid: self.automated_alignment._update_block_status(bid)
+            lambda bid, res: self.automated_alignment._update_block_status(bid)
         )
         self.signals.block_alignment_complete.connect(
-            self.manual_alignment._update_calibration_status
+            lambda bid, res: self.manual_alignment._update_calibration_status()
         )
     
     def _start_camera_stream(self):
-        """Start camera streaming thread."""
+        """Start camera streaming thread WITH IMPROVED ERROR HANDLING."""
         if self.camera is None:
             print("[MainWindow] No camera available")
             return
+        
+        # ✅ FIX: Check if camera acquisition is already running
+        if hasattr(self.camera, 'acquisition_running') and self.camera.acquisition_running:
+            print("[MainWindow] ⚠️  Camera already acquiring - stopping first")
+            try:
+                self.camera.stop_acquisition()
+            except Exception as e:
+                print(f"[MainWindow] Warning: Failed to stop acquisition: {e}")
         
         self.camera_thread = CameraStreamThread(camera=self.camera, target_fps=20)
         
         self.camera_thread.frame_ready.connect(self.camera_view.update_frame)
         self.camera_thread.stats_updated.connect(self.camera_view.update_stats)
         self.camera_thread.error_occurred.connect(
-            lambda msg: self.signals.error_occurred.emit("Camera Error", msg)
+            lambda msg: self._handle_camera_error(msg)  # ✅ NEW: Better error handling
         )
         
         self.camera_view.set_camera_thread(self.camera_thread)
         
         self.camera_thread.start()
         print("[MainWindow] Camera stream started")
+    
+    def _handle_camera_error(self, msg: str):
+        """Handle camera errors WITHOUT showing popup for every frame."""
+        # ✅ FIX: Only show error once, not for every frame
+        if not hasattr(self, '_last_camera_error') or self._last_camera_error != msg:
+            self._last_camera_error = msg
+            print(f"[MainWindow] Camera error: {msg}")
+            
+            # Only show popup for serious errors (not AT_ERR_NOTWRITABLE during acquisition)
+            if "AT_ERR_NOTWRITABLE" not in msg and "cannot join thread" not in msg:
+                self.signals.error_occurred.emit("Camera Error", msg)
     
     def _start_position_updates(self):
         """Start periodic stage position updates."""

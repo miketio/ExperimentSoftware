@@ -1,0 +1,149 @@
+                                                      python -m app.main
+======================================================================
+Microscope Alignment GUI
+======================================================================
+
+Hardware Detection:
+  Real Camera: True
+  Real Stage: True
+
+Selected mode: REAL
+Initializing hardware...
+[MultiMCSManager] Discovering MCS devices...
+[MultiMCSManager] Found 2 MCS device(s):
+  ✅ MCS[0]: usb:id:3630419293 (3 channels)
+  ✅ MCS[1]: usb:id:3924573425 (1 channels)
+[HardwareManager] Found 2 MCS device(s)
+
+[MultiMCSManager] Auto-assigning roles based on channel count...
+  ✅ MCS[0] (usb:id:3630419293) → XYZ Stage (3 channels)
+  ✅ MCS[1] (usb:id:3924573425) → Filter Stage (1 channel)
+
+[MultiMCSManager] Validating device assignments...
+  ✅ XYZ stage: MCS[0] with 3 channels
+  ✅ Filter stage: MCS[1] with 1 channel
+[MultiMCSManager] Initializing XYZ stage...
+[SmarActXYZStage] Opening specified device: usb:id:3630419293
+[SmarActXYZStage] ✅ Opened device: usb:id:3630419293
+[SmarActXYZStage] Number of Channels: 3
+[SmarActXYZStage] Sensor type for channel 0: 41
+[SmarActXYZStage] Position in channel 0 (x): UNKNOWN
+[SmarActXYZStage] Position in channel 1 (y): UNKNOWN
+[SmarActXYZStage] Position in channel 2 (z): UNKNOWN
+[MultiMCSManager] ✅ Created XYZ stage from MCS[0]
+✅ XYZ stage initialized
+Connecting to Andor SDK3 camera...
+Successfully connected.
+✅ Camera initialized
+[MultiMCSManager] Initializing filter stage...
+[MultiMCSManager] ⏳ Please wait ~10 seconds for 1D stage initialization...
+[FilterStage] Initialized on usb:id:3924573425
+  Channels: 1
+  Axis channel: 0
+  Sensor type: 1
+[MultiMCSManager] ✅ Created Filter stage from MCS[1] (took 1.9s)
+✅ Filter stage initialized
+✅ Real hardware connected successfully
+
+Layout mode: existing
+Loading layout from: config\mock_layout.json
+✅ Loaded design: ArrayD_QuasiPeriodic_20Blocks
+
+Found runtime state: config/runtime_state.json
+[RuntimeLayout] Block 1 position set to: Y=300.000, Z=200.000 µm
+  ✅ Block 1 position: Y=300.000, Z=200.000 µm
+
+Launching GUI...
+[NavigationController] Initialized
+[MainWindow] Initializing REAL filter controller
+QLayout::addChildLayout: layout QHBoxLayout "" already has a parent
+[ManualCalibrationPanel] Loading 0 fiducials
+[MainWindow] Auto-detected LANDSCAPE mode (aspect: 1.78)
+[MainWindow] Camera stream started
+[CameraStream] Started (target 20 fps)
+✅ GUI launched successfully
+
+Application running. Close window to exit.
+======================================================================
+[MainWindow] Camera error: Camera acquisition error: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 977nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 2007nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 3014nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 7041nm: feature is not writable: FrameCount
+⚠️  Failed to capture at 8546nm: feature is not writable: FrameCount
+⚠️  Failed to capture at 8853nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+[MainWindow] Camera error: Camera acquisition error: feature is not writable: FrameCount
+[FilterController] Sweep saved to: results\filter_sweep_20260113_173437
+⚠️  Failed to capture at -216nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 988nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 2006nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 3014nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+[MainWindow] Camera error: Camera acquisition error: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 5026nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+[MainWindow] Camera error: Camera acquisition error: feature is not writable: FrameCount
+[MainWindow] Camera error: Camera acquisition error: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+⚠️  Failed to capture at 9997nm: function 'AT_Command' raised error 5(AT_ERR_NOTWRITABLE)
+[FilterController] Sweep saved to: results\filter_sweep_20260113_173608
+[MainWindow] Cleaning up...
+[CameraStream] Stopped
+
+Shutting down...
+[MainWindow] Cleaning up...
+[FilterStage] Closed
+[SmarActXYZStage] Stage closed.
+Error closing MCS manager: 'MultiMCSManager' object has no attribute 'close_all'
+✅ Shutdown complete
+(venv) PS C:\Users\mtiuterev\Data\ExperimentSoftware> python -m app.main
+======================================================================
+Microscope Alignment GUI
+======================================================================
+
+Hardware Detection:
+  Real Camera: True
+  Real Stage: True
+
+Selected mode: MOCK
+Initializing hardware...
+[MockStage] Initialized at X=0nm, Y=0nm, Z=0nm
+✓ Loaded ground truth: rot=3.000000°, trans=(300.0, 200.0), block_errors=20
+[MockCameraV3] Initialized
+  Sensor: 2048x2048px, 0.300 µm/px
+  FOV: 614.4 × 614.4 µm
+[MockCameraV3] Connected (simulated)
+[MockStage] Camera observer registered
+✅ Mock hardware initialized successfully
+✅ Camera pixel size: 0.300 µm/pixel
+
+Layout mode: existing
+Loading layout from: config\mock_layout.json
+✅ Loaded design: ArrayD_QuasiPeriodic_20Blocks
+
+Found runtime state: config/runtime_state.json
+[RuntimeLayout] Block 1 position set to: Y=300.000, Z=200.000 µm
+  ✅ Block 1 position: Y=300.000, Z=200.000 µm
+
+Launching GUI...
+[NavigationController] Initialized
+[MainWindow] Initializing MOCK filter controller
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\mtiuterev\Data\ExperimentSoftware\app\main.py", line 294, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\mtiuterev\Data\ExperimentSoftware\app\main.py", line 264, in main
+    main_window = MainWindow(
+        state=state,
+    ...<4 lines>...
+        runtime_layout=runtime_layout
+    )
+  File "C:\Users\mtiuterev\Data\ExperimentSoftware\app\main_window.py", line 72, in __init__
+    self._detect_and_apply_layout()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\mtiuterev\Data\ExperimentSoftware\app\main_window.py", line 91, in _detect_and_apply_layout
+    self._init_landscape_layout()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\mtiuterev\Data\ExperimentSoftware\app\main_window.py", line 258, in _init_landscape_layout
+    from app.controllers.filter_controller import MockFilterController
+ImportError: cannot import name 'MockFilterController' from 'app.controllers.filter_controller' (C:\Users\mtiuterev\Data\ExperimentSoftware\app\controllers\filter_controller.py)
+(venv) PS C:\Users\mtiuterev\Data\ExperimentSoftware> 

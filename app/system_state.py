@@ -68,7 +68,7 @@ class CameraState:
     show_fourier: bool = False  # NEW: Fourier transform mode
     beam_position_px: Tuple[int, int] = (512, 512)  # Beam location in pixels
     show_beam_indicator: bool = True  # Show beam crosshair
-    um_per_pixel: float = 0  # Micrometers per pixel
+    um_per_pixel: float = 0.3  # Micrometers per pixel
     
 class SystemState:
     """

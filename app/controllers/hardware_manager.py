@@ -16,6 +16,7 @@ class HardwareManager:
     - Mock/real hardware detection
     - Initialization with proper adapters
     - Hardware status queries
+    - Multi-MCS device management (XYZ stage + Filter stage)
     """
     
     def __init__(self, layout_path: str = "config/mock_layout.json"):
@@ -30,6 +31,8 @@ class HardwareManager:
         self.camera = None
         self.stage = None
         self.stage_adapter = None  # Micrometer adapter
+        self.filter_stage = None  # NEW: 1D filter stage
+        self.mcs_manager = None   # NEW: Multi-MCS manager
         
         self.mode = "disconnected"  # "mock", "real", "disconnected"
         
@@ -91,6 +94,9 @@ class HardwareManager:
             
             stage_nm.set_camera_observer(self.camera)
             
+            # No filter stage in mock mode
+            self.filter_stage = None
+            
             self.mode = "mock"
             return True, "Mock hardware initialized successfully"
         
@@ -100,29 +106,59 @@ class HardwareManager:
     
     def initialize_real_hardware(self) -> Tuple[bool, str]:
         """
-        Initialize real hardware.
+        Initialize real hardware with Multi-MCS device discovery.
         
         Returns:
             (success, message)
         """
         try:
-            from hardware_control.camera_control.zyla_camera import ZylaCamera
-            from hardware_control.setup_motor.smartact_stage import SmarActXYZStage
-            from hardware_control.setup_motor.stage_adapter import StageAdapterUM
+            from hardware_control.setup_motor.multi_mcs_manager import MultiMCSManager
             
-            # Initialize stage
-            stage_nm = SmarActXYZStage()
+            # Discover all MCS devices
+            self.mcs_manager = MultiMCSManager()
+            devices = self.mcs_manager.discover_devices()
+            
+            if len(devices) == 0:
+                return False, "No MCS devices found"
+            
+            print(f"[HardwareManager] Found {len(devices)} MCS device(s)")
+            
+            # Auto-assign roles based on channel count
+            if not self.mcs_manager.auto_assign_roles():
+                return False, "Failed to auto-assign device roles"
+            
+            # Validate assignments
+            if not self.mcs_manager.validate_assignments():
+                print("⚠️  Device assignment validation failed, proceeding anyway...")
+            
+            # Initialize XYZ stage
+            stage_nm = self.mcs_manager.get_xyz_stage()
             self.stage = stage_nm
+            
+            from hardware_control.setup_motor.stage_adapter import StageAdapterUM
             self.stage_adapter = StageAdapterUM(stage_nm)
+            print("✅ XYZ stage initialized")
             
             # Initialize camera
+            from hardware_control.camera_control.zyla_camera import ZylaCamera
             self.camera = ZylaCamera()
             self.camera.connect()
+            print("✅ Camera initialized")
+            
+            # Initialize filter stage (with 10s wait tolerance)
+            try:
+                self.filter_stage = self.mcs_manager.get_filter_stage()
+                print("✅ Filter stage initialized")
+            except RuntimeError as e:
+                print(f"ℹ️  No filter stage available: {e}")
+                self.filter_stage = None
             
             self.mode = "real"
             return True, "Real hardware connected successfully"
-        
+            
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.mode = "disconnected"
             return False, f"Failed to connect to real hardware: {e}"
     
@@ -136,12 +172,26 @@ class HardwareManager:
             print(f"Error disconnecting camera: {e}")
         
         try:
+            if self.filter_stage is not None:
+                self.filter_stage.close()
+                self.filter_stage = None
+        except Exception as e:
+            print(f"Error closing filter stage: {e}")
+        
+        try:
             if self.stage is not None:
                 self.stage.close()
                 self.stage = None
                 self.stage_adapter = None
         except Exception as e:
             print(f"Error closing stage: {e}")
+        
+        try:
+            if self.mcs_manager is not None:
+                self.mcs_manager.close_all()
+                self.mcs_manager = None
+        except Exception as e:
+            print(f"Error closing MCS manager: {e}")
         
         self.mode = "disconnected"
     
@@ -152,6 +202,10 @@ class HardwareManager:
     def get_stage(self):
         """Get stage adapter instance (µm interface, or None)."""
         return self.stage_adapter
+    
+    def get_filter_stage(self):
+        """Get filter stage instance (or None)."""
+        return self.filter_stage
     
     def get_mode(self) -> str:
         """Get current hardware mode."""
