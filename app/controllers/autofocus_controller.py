@@ -25,7 +25,7 @@ class AutofocusWorker(QThread):
     failed = pyqtSignal(str)  # error message
     plot_data = pyqtSignal(list, list)  # positions, metrics (for live plotting)
     
-    def __init__(self, camera, stage, axis='x', scan_range_um=10.0, 
+    def __init__(self, camera, stage, axis='y', scan_range_um=10.0, 
                  step_um=0.5, enable_plot=False):
         """
         Initialize autofocus worker.
@@ -189,7 +189,7 @@ class AutofocusController:
         self.last_positions = []
         self.last_metrics = []
     
-    def run_autofocus(self, axis='x', scan_range_um=10.0, step_um=0.5, 
+    def run_autofocus(self, axis='y', scan_range_um=10.0, step_um=0.5, 
                      enable_plot=False) -> bool:
         """
         Start autofocus scan.

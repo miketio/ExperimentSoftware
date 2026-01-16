@@ -1,10 +1,10 @@
-# app/widgets/camera_view.py - MODIFIED TO ADD COLORBAR
+# app/widgets/camera_view.py - WITH EXPOSURE CONTROL
 
-"""Camera View Widget - NOW WITH COLORBAR!"""
+"""Camera View Widget - WITH COLORBAR, FIXED ROI BOUNDS, AND EXPOSURE CONTROL"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QSlider, QCheckBox, QGroupBox, QPushButton, QSpinBox
+    QSlider, QCheckBox, QGroupBox, QPushButton, QSpinBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
@@ -13,7 +13,7 @@ import cv2
 
 
 class CameraViewWidget(QWidget):
-    """Camera display with live feed, overlays, and colorbar."""
+    """Camera display with live feed, overlays, colorbar, and exposure control."""
     
     # Colorbar settings
     COLORBAR_WIDTH = 80  # pixels
@@ -27,8 +27,9 @@ class CameraViewWidget(QWidget):
         self.current_frame = None
         self.current_stats = {}
         self.camera_thread = None
+        self.camera = None  # Direct camera reference
 
-        # NEW: Zoom center mode
+        # Zoom center mode
         self.zoom_to_beam = False  # False = zoom to center, True = zoom to beam
 
         self._init_ui()
@@ -37,6 +38,17 @@ class CameraViewWidget(QWidget):
     def set_camera_thread(self, camera_thread):
         """Set camera thread reference."""
         self.camera_thread = camera_thread
+        if camera_thread:
+            self.camera = camera_thread.camera
+            # Update exposure display with current value
+            if hasattr(self.camera, 'get_exposure_time'):
+                try:
+                    current_exp = self.camera.get_exposure_time()
+                    self.exposure_spin.blockSignals(True)
+                    self.exposure_spin.setValue(current_exp * 1000)  # Convert to ms
+                    self.exposure_spin.blockSignals(False)
+                except Exception as e:
+                    print(f"[CameraView] Could not read exposure: {e}")
     
     def _init_ui(self):
         layout = QVBoxLayout()
@@ -57,7 +69,7 @@ class CameraViewWidget(QWidget):
         group = QGroupBox("Camera Controls")
         layout = QVBoxLayout()
         
-        # Row 1: Zoom
+        # Row 1: Zoom + Beam toggle
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Zoom:"))
         self.zoom_combo = QComboBox()
@@ -66,13 +78,13 @@ class CameraViewWidget(QWidget):
         self.zoom_combo.currentTextChanged.connect(self._on_zoom_changed)
         row1.addWidget(self.zoom_combo)
         
-        # NEW: Zoom mode selector
+        # Zoom mode selector
         self.zoom_mode_combo = QComboBox()
         self.zoom_mode_combo.addItems(['Zoom to Center', 'Zoom to Beam'])
         self.zoom_mode_combo.currentTextChanged.connect(self._on_zoom_mode_changed)
         row1.addWidget(self.zoom_mode_combo)
         
-        # NEW: Beam toggle button
+        # Beam toggle button
         self.btn_beam_toggle = QPushButton("🔴 Beam ON")
         self.btn_beam_toggle.setCheckable(True)
         self.btn_beam_toggle.setChecked(True)
@@ -86,37 +98,55 @@ class CameraViewWidget(QWidget):
         
         row1.addStretch()
         layout.addLayout(row1)
-        row1.addStretch()
-        layout.addLayout(row1)
         
-        # Row 2: Auto-scale
+        # Row 2: Exposure control
         row2 = QHBoxLayout()
-        self.auto_scale_check = QCheckBox("Auto-scale")
-        self.auto_scale_check.setChecked(self.state.camera.color_scale_auto)
-        self.auto_scale_check.toggled.connect(self._on_auto_scale_toggled)
-        row2.addWidget(self.auto_scale_check)
+        row2.addWidget(QLabel("Exposure:"))
+        self.exposure_spin = QDoubleSpinBox()
+        self.exposure_spin.setRange(0.1, 10000.0)  # 0.1ms to 10s
+        self.exposure_spin.setValue(20.0)  # Default 20ms
+        self.exposure_spin.setDecimals(2)
+        self.exposure_spin.setSuffix(" ms")
+        self.exposure_spin.setToolTip("Camera exposure time in milliseconds")
+        self.exposure_spin.valueChanged.connect(self._on_exposure_changed)
+        row2.addWidget(self.exposure_spin)
+        
+        self.btn_apply_exposure = QPushButton("Apply")
+        self.btn_apply_exposure.setToolTip("Apply exposure time to camera")
+        self.btn_apply_exposure.clicked.connect(self._apply_exposure)
+        row2.addWidget(self.btn_apply_exposure)
+        
         row2.addStretch()
         layout.addLayout(row2)
         
-        # Row 3: Manual scale
+        # Row 3: Auto-scale
         row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Min:"))
+        self.auto_scale_check = QCheckBox("Auto-scale")
+        self.auto_scale_check.setChecked(self.state.camera.color_scale_auto)
+        self.auto_scale_check.toggled.connect(self._on_auto_scale_toggled)
+        row3.addWidget(self.auto_scale_check)
+        row3.addStretch()
+        layout.addLayout(row3)
+        
+        # Row 4: Manual scale
+        row4 = QHBoxLayout()
+        row4.addWidget(QLabel("Min:"))
         self.min_spin = QSpinBox()
         self.min_spin.setRange(0, 65535)
         self.min_spin.setValue(self.state.camera.color_scale_min)
         self.min_spin.valueChanged.connect(self._on_manual_scale_changed)
         self.min_spin.setEnabled(not self.state.camera.color_scale_auto)
-        row3.addWidget(self.min_spin)
+        row4.addWidget(self.min_spin)
         
-        row3.addWidget(QLabel("Max:"))
+        row4.addWidget(QLabel("Max:"))
         self.max_spin = QSpinBox()
         self.max_spin.setRange(0, 65535)
         self.max_spin.setValue(self.state.camera.color_scale_max)
         self.max_spin.valueChanged.connect(self._on_manual_scale_changed)
         self.max_spin.setEnabled(not self.state.camera.color_scale_auto)
-        row3.addWidget(self.max_spin)
-        row3.addStretch()
-        layout.addLayout(row3)
+        row4.addWidget(self.max_spin)
+        row4.addStretch()
+        layout.addLayout(row4)
         
         # Stats
         self.stats_label = QLabel("Min: -- | Max: -- | Mean: --")
@@ -135,6 +165,59 @@ class CameraViewWidget(QWidget):
         else:
             zoom = float(zoom_text.strip('%')) / 100.0
             self.set_zoom(zoom)
+    
+    def _on_exposure_changed(self, value_ms: float):
+        """Exposure spinbox value changed (milliseconds)."""
+        # Just update the display, don't apply yet
+        pass
+    
+    def _apply_exposure(self):
+        """Apply exposure time to camera."""
+        if self.camera is None:
+            print("[CameraView] No camera available")
+            self.signals.status_message.emit("No camera connected")
+            return
+        
+        exposure_ms = self.exposure_spin.value()
+        exposure_s = exposure_ms / 1000.0
+        
+        print(f"[CameraView] Setting exposure to {exposure_ms:.2f} ms ({exposure_s:.4f} s)")
+        
+        try:
+            # Stop camera stream temporarily
+            stream_was_running = False
+            if self.camera_thread and self.camera_thread.isRunning():
+                stream_was_running = True
+                print("[CameraView] Stopping camera stream...")
+                self.signals.request_stop_camera_stream.emit()
+                # Wait briefly for stream to stop
+                import time
+                time.sleep(0.2)
+            
+            # Set exposure
+            if hasattr(self.camera, 'set_exposure_time'):
+                self.camera.set_exposure_time(exposure_s)
+                print(f"[CameraView] ✅ Exposure set to {exposure_s:.4f} s")
+                self.signals.status_message.emit(f"Exposure set to {exposure_ms:.2f} ms")
+            else:
+                print("[CameraView] Camera does not support set_exposure_time()")
+                self.signals.status_message.emit("Camera does not support exposure control")
+            
+            # Restart camera stream
+            if stream_was_running:
+                print("[CameraView] Restarting camera stream...")
+                import time
+                time.sleep(0.1)
+                self.signals.request_start_camera_stream.emit()
+        
+        except Exception as e:
+            print(f"[CameraView] Failed to set exposure: {e}")
+            import traceback
+            traceback.print_exc()
+            self.signals.error_occurred.emit(
+                "Exposure Set Failed",
+                f"Could not set exposure time:\n\n{e}"
+            )
     
     def _on_auto_scale_toggled(self, checked: bool):
         self.state.camera.color_scale_auto = checked
@@ -208,12 +291,7 @@ class CameraViewWidget(QWidget):
         self.image_label.setPixmap(pixmap)
     
     def _add_colorbar(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Add colorbar to the right side of the frame.
-        
-        Returns:
-            Combined frame with colorbar
-        """
+        """Add colorbar to the right side of the frame."""
         h, w = frame.shape[:2]
         
         # Get current colormap from camera thread
@@ -359,7 +437,6 @@ class CameraViewWidget(QWidget):
         
         if self.state.camera.show_scale_bar:
             scale_bar_um = 50.0
-            # AFTER (CORRECT):
             um_per_pixel = self.state.camera.um_per_pixel
             
             scale_bar_pixels = int(scale_bar_um / um_per_pixel)
@@ -400,54 +477,98 @@ class CameraViewWidget(QWidget):
     def set_zoom(self, zoom: float):
         """Set zoom level with configurable center (center or beam)."""
         self.state.camera.zoom_level = zoom
-        if not self.camera_thread or not hasattr(self.camera_thread.camera, 'set_roi'):
+        
+        if not self.camera or not hasattr(self.camera, 'set_roi'):
+            print("[CameraView] No camera or set_roi not available")
             return
         
         try:
-            sensor_w, sensor_h = self.camera_thread.camera.get_sensor_size()
+            # Get sensor size
+            sensor_w, sensor_h = self.camera.get_sensor_size()
+            print(f"[CameraView] Sensor size: {sensor_w}x{sensor_h}")
+            
+            # Calculate desired ROI size
             roi_w = int(sensor_w / zoom)
             roi_h = int(sensor_h / zoom)
             
+            # Clamp ROI size to valid range
             min_roi_size = 64
-            roi_w = max(min_roi_size, min(roi_w, sensor_w))
-            roi_h = max(min_roi_size, min(roi_h, sensor_h))
+            max_roi_size_w = sensor_w
+            max_roi_size_h = sensor_h
             
-            # Determine zoom center based on mode
+            if roi_w < min_roi_size:
+                roi_w = min_roi_size
+                zoom = sensor_w / roi_w
+                print(f"[CameraView] ROI width clamped to {min_roi_size}px")
+            
+            if roi_h < min_roi_size:
+                roi_h = min_roi_size
+                zoom = sensor_h / roi_h
+                print(f"[CameraView] ROI height clamped to {min_roi_size}px")
+            
+            roi_w = min(roi_w, max_roi_size_w)
+            roi_h = min(roi_h, max_roi_size_h)
+            
+            # Determine zoom center
             if self.zoom_to_beam:
-                # Zoom to beam position
                 center_x, center_y = self.state.camera.beam_position_px
-
+                print(f"[CameraView] Zooming to beam at ({center_x}, {center_y})")
             else:
-                # Zoom to image center (default)
                 center_x = sensor_w // 2
                 center_y = sensor_h // 2
+                print(f"[CameraView] Zooming to center at ({center_x}, {center_y})")
             
-            # Calculate ROI position (trying to center on target)
+            # Calculate ROI position
             left = center_x - roi_w // 2
             top = center_y - roi_h // 2
             
-            # Constrain to sensor bounds (best effort)
+            # Constrain ROI position
             left = max(0, min(left, sensor_w - roi_w))
             top = max(0, min(top, sensor_h - roi_h))
             
-            self.camera_thread.camera.set_roi(left, top, roi_w, roi_h)
+            # Validate
+            if left < 0 or top < 0 or (left + roi_w) > sensor_w or (top + roi_h) > sensor_h:
+                error_msg = (
+                    f"Invalid ROI: ({left}, {top}, {roi_w}, {roi_h}) "
+                    f"exceeds sensor bounds ({sensor_w}x{sensor_h})"
+                )
+                print(f"[CameraView] ❌ {error_msg}")
+                self.signals.error_occurred.emit("ROI Validation Failed", error_msg)
+                self.camera.set_roi(0, 0, sensor_w, sensor_h)
+                self.zoom_combo.setCurrentText('Fit')
+                return
+            
+            # Set ROI
+            print(f"[CameraView] Setting ROI: left={left}, top={top}, w={roi_w}, h={roi_h}")
+            self.camera.set_roi(left, top, roi_w, roi_h)
+            print(f"[CameraView] ✅ Zoom set to {zoom:.2f}x successfully")
             
         except Exception as e:
-            print(f"[CameraView] Failed to set zoom: {e}")
+            print(f"[CameraView] ❌ Failed to set zoom: {e}")
+            import traceback
+            traceback.print_exc()
+            
             try:
-                sensor_w, sensor_h = self.camera_thread.camera.get_sensor_size()
-                self.camera_thread.camera.set_roi(0, 0, sensor_w, sensor_h)
-            except:
-                pass
+                sensor_w, sensor_h = self.camera.get_sensor_size()
+                self.camera.set_roi(0, 0, sensor_w, sensor_h)
+                self.zoom_combo.setCurrentText('Fit')
+                print("[CameraView] Recovered to full sensor view")
+            except Exception as e2:
+                print(f"[CameraView] ❌ Failed to recover: {e2}")
     
     def zoom_fit(self):
+        """Reset to full sensor view."""
         self.state.camera.zoom_level = 1.0
-        if self.camera_thread and hasattr(self.camera_thread.camera, 'set_roi'):
-            try:
-                sensor_w, sensor_h = self.camera_thread.camera.get_sensor_size()
-                self.camera_thread.camera.set_roi(0, 0, sensor_w, sensor_h)
-            except Exception as e:
-                print(f"[CameraView] Failed to reset ROI: {e}")
+        
+        if not self.camera or not hasattr(self.camera, 'set_roi'):
+            return
+        
+        try:
+            sensor_w, sensor_h = self.camera.get_sensor_size()
+            self.camera.set_roi(0, 0, sensor_w, sensor_h)
+            print(f"[CameraView] ✅ Zoom reset to fit: {sensor_w}x{sensor_h}")
+        except Exception as e:
+            print(f"[CameraView] ❌ Failed to reset ROI: {e}")
 
     def _on_zoom_mode_changed(self, mode_text: str):
         """Change zoom center mode."""

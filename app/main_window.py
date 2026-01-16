@@ -128,22 +128,19 @@ class MainWindow(QMainWindow):
         
         # ✅ K-FILTER CONTROLLER (mock or real)
         filter_stage = self.hw_manager.get_filter_stage()
-        if filter_stage is not None:
-            print("[MainWindow] Initializing REAL filter controller")
-            from app.controllers.filter_controller import FilterController
-            self.filter_controller = FilterController(
-                state=self.state,
-                signals=self.signals,
-                filter_stage=filter_stage,
-                camera=self.camera
-            )
-        else:
-            print("[MainWindow] Initializing MOCK filter controller")
-            from app.controllers.filter_controller import MockFilterController
-            self.filter_controller = MockFilterController(
-                state=self.state,
-                signals=self.signals
-            )
+        if filter_stage is None:
+            print("[MainWindow] No real filter hardware, using MOCK")
+            from hardware_control.setup_motor.mock_filter_stage import MockFilterStage
+            filter_stage = MockFilterStage()
+
+        # Single controller for both real and mock
+        from app.controllers.filter_controller import FilterController
+        self.filter_controller = FilterController(
+            state=self.state,
+            signals=self.signals,
+            filter_stage=filter_stage,
+            camera=self.camera
+        )
         
         # Central widget
         central = QWidget()
@@ -192,6 +189,13 @@ class MainWindow(QMainWindow):
             self.state, self.signals, self.filter_controller
         )
         control_tabs.addTab(self.filter_panel, "K-Filter")
+        
+        # ✅ BOOKMARKS TAB (saved positions)
+        from app.widgets.saved_positions_panel import SavedPositionsPanel
+        self.saved_positions_panel = SavedPositionsPanel(
+            self.state, self.signals, self.stage
+        )
+        control_tabs.addTab(self.saved_positions_panel, "Bookmarks")
         
         top_splitter.addWidget(control_tabs)
         top_splitter.setStretchFactor(0, 3)
@@ -244,22 +248,19 @@ class MainWindow(QMainWindow):
         
         # ✅ K-FILTER CONTROLLER (mock or real)
         filter_stage = self.hw_manager.get_filter_stage()
-        if filter_stage is not None:
-            print("[MainWindow] Initializing REAL filter controller")
-            from app.controllers.filter_controller import FilterController
-            self.filter_controller = FilterController(
-                state=self.state,
-                signals=self.signals,
-                filter_stage=filter_stage,
-                camera=self.camera
-            )
-        else:
-            print("[MainWindow] Initializing MOCK filter controller")
-            from app.controllers.filter_controller import MockFilterController
-            self.filter_controller = MockFilterController(
-                state=self.state,
-                signals=self.signals
-            )
+        if filter_stage is None:
+            print("[MainWindow] No real filter hardware, using MOCK")
+            from hardware_control.setup_motor.mock_filter_stage import MockFilterStage
+            filter_stage = MockFilterStage()
+
+        # Single controller for both real and mock
+        from app.controllers.filter_controller import FilterController
+        self.filter_controller = FilterController(
+            state=self.state,
+            signals=self.signals,
+            filter_stage=filter_stage,
+            camera=self.camera
+        )
         
         # Central widget
         central = QWidget()
@@ -333,6 +334,13 @@ class MainWindow(QMainWindow):
         )
         control_tabs.addTab(self.filter_panel, "K-Filter")
         
+        # ✅ BOOKMARKS TAB (saved positions)
+        from app.widgets.saved_positions_panel import SavedPositionsPanel
+        self.saved_positions_panel = SavedPositionsPanel(
+            self.state, self.signals, self.stage
+        )
+        control_tabs.addTab(self.saved_positions_panel, "Bookmarks")
+
         right_layout.addWidget(control_tabs, stretch=2)
         
         # Block grid
@@ -559,6 +567,7 @@ class MainWindow(QMainWindow):
         
         self.signals.status_message.emit(f"Layout switched to {mode} mode")
     
+
     def _connect_signals(self):
         """Connect signals between components."""
         self.signals.status_message.connect(
@@ -581,6 +590,19 @@ class MainWindow(QMainWindow):
         self.signals.block_alignment_complete.connect(
             lambda bid, res: self.manual_alignment._update_calibration_status()
         )
+        
+        # ✅ NEW: Camera stream control signals
+        self.signals.request_stop_camera_stream.connect(self._stop_camera_stream)
+        self.signals.request_start_camera_stream.connect(self._start_camera_stream_safe)
+
+
+    def _stop_camera_stream(self):
+        """Stop camera stream thread (called by signal)."""
+        if self.camera_thread is not None:
+            print("[MainWindow] Stopping camera stream")
+            self.camera_thread.stop()
+            self.camera_thread = None
+            self.signals.camera_stream_stopped.emit()
     
     def _start_camera_stream(self):
         """Start camera streaming thread WITH IMPROVED ERROR HANDLING."""
@@ -609,6 +631,15 @@ class MainWindow(QMainWindow):
         self.camera_thread.start()
         print("[MainWindow] Camera stream started")
     
+    def _start_camera_stream_safe(self):
+        """Restart camera stream if not already running."""
+        if self.camera_thread is None:
+            print("[MainWindow] Restarting camera stream")
+            self._start_camera_stream()
+            self.signals.camera_stream_started.emit()
+        else:
+            print("[MainWindow] Camera stream already running, skipping restart")
+
     def _handle_camera_error(self, msg: str):
         """Handle camera errors WITHOUT showing popup for every frame."""
         # ✅ FIX: Only show error once, not for every frame

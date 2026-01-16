@@ -23,7 +23,7 @@ class SmarActXYZStage(XYZStageBase):
         self, 
         axis_map: Optional[Dict[str, int]] = None, 
         locator: Optional[str] = None,
-        options: str = "sync,reset",
+        options: str = "sync",
         find_buffer_size: int = 256
     ):
         """

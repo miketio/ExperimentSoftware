@@ -3,9 +3,13 @@
 """
 Micrometer-based MockCamera using CameraLayout + CoordinateTransformV3.
 
+NEW COORDINATE SYSTEM:
+- X axis: LEFT/RIGHT (horizontal in image)
+- Y axis: FOCUS (in/out of focus, controls blur)
+- Z axis: UP/DOWN (vertical in image)
+
 Renders synthetic microscopy images of fiducials, waveguides, and gratings
 based on simulated stage position (µm).
-Intended as a realistic drop-in replacement for hardware camera.
 """
 
 from __future__ import annotations
@@ -20,11 +24,14 @@ from alignment_system.coordinate_transform_v3 import CoordinateTransformV3
 from config.layout_models import CameraLayout, Block
 
 
-# ============================================================
-# Mock Camera Implementation
-# ============================================================
 class MockCamera(AndorCameraBase):
-    """Simulated camera producing synthetic images in µm coordinate space."""
+    """Simulated camera producing synthetic images in µm coordinate space.
+    
+    COORDINATE SYSTEM:
+    - X = horizontal (left/right)
+    - Y = focus (in/out)
+    - Z = vertical (up/down)
+    """
 
     def __init__(self, layout_config_path: str = "config/mock_layout.json", stage_ref=None):
         super().__init__()
@@ -33,8 +40,7 @@ class MockCamera(AndorCameraBase):
         self.layout: CameraLayout = CameraLayout.from_json_file(layout_config_path)
         self.converter = CoordinateTransformV3(self.layout)
 
-
-       # Apply full ground truth transformation (global + per-block)
+        # Apply full ground truth transformation
         self.converter.use_ground_truth()
                 
         self.stage = stage_ref
@@ -55,6 +61,7 @@ class MockCamera(AndorCameraBase):
         print(f"[MockCameraV3] Initialized")
         print(f"  Sensor: {self.sensor_width}x{self.sensor_height}px, {self.um_per_pixel:.3f} µm/px")
         print(f"  FOV: {self.sensor_width*self.um_per_pixel:.1f} × {self.sensor_height*self.um_per_pixel:.1f} µm")
+        print(f"  Coordinate system: X=horizontal, Y=focus, Z=vertical")
 
     # ========================================================
     # Connection
@@ -99,15 +106,18 @@ class MockCamera(AndorCameraBase):
     # Image Acquisition
     # ========================================================
     def acquire_single_image(self) -> np.ndarray:
-        """Render a synthetic image based on current stage (µm)."""
+        """Render a synthetic image based on current stage (µm).
+        
+        NEW: X=horizontal, Y=focus, Z=vertical
+        """
         if self.stage is None:
             raise RuntimeError("MockCameraV3: stage reference required")
 
-        Y_um = self.stage.get_pos("y")
-        Z_um = self.stage.get_pos("z")
-        X_um = self.stage.get_pos("x")
+        X_um = self.stage.get_pos("x")  # Horizontal position
+        Z_um = self.stage.get_pos("z")  # Vertical position
+        Y_um = self.stage.get_pos("y")  # Focus position
 
-        img = self._render_image(Y_um, Z_um, X_um)
+        img = self._render_image(X_um, Z_um, Y_um)
 
         if self.roi is not None:
             l, t, w, h = self.roi
@@ -132,38 +142,51 @@ class MockCamera(AndorCameraBase):
     # ========================================================
     # Rendering
     # ========================================================
-    def _render_image(self, Y_center_um: float, Z_center_um: float, X_um: float) -> np.ndarray:
-        """Render synthetic view for the current stage position (µm)."""
+    def _render_image(self, X_center_um: float, Z_center_um: float, Y_um: float) -> np.ndarray:
+        """Render synthetic view for the current stage position (µm).
+        
+        Args:
+            X_center_um: Horizontal center position (left/right)
+            Z_center_um: Vertical center position (up/down)
+            Y_um: Focus position (in/out of focus)
+        """
         rng = np.random.default_rng()
         base = rng.integers(300, 600, (self.sensor_height, self.sensor_width), dtype=np.uint16)
         noise = rng.normal(0, 50, (self.sensor_height, self.sensor_width))
         img = np.clip(base + noise, 0, 65535).astype(np.uint16)
 
-        halfY = (self.sensor_width * self.um_per_pixel) / 2
+        halfX = (self.sensor_width * self.um_per_pixel) / 2
         halfZ = (self.sensor_height * self.um_per_pixel) / 2
-        Ymin, Ymax = Y_center_um - halfY, Y_center_um + halfY
+        Xmin, Xmax = X_center_um - halfX, X_center_um + halfX
         Zmin, Zmax = Z_center_um - halfZ, Z_center_um + halfZ
 
         for block_id, block in self.layout.blocks.items():
             for name, fid in block.fiducials.items():
                 self._render_fiducial(img, block_id, fid.u, fid.v, name,
-                                      Y_center_um, Z_center_um, Ymin, Ymax, Zmin, Zmax)
+                                      X_center_um, Z_center_um, Xmin, Xmax, Zmin, Zmax)
             for wg_id, wg in block.waveguides.items():
                 self._render_waveguide(img, block_id, wg.u_start, wg.u_end, wg.v_center, wg.width,
-                                       Y_center_um, Z_center_um, Ymin, Ymax, Zmin, Zmax)
+                                       X_center_um, Z_center_um, Xmin, Xmax, Zmin, Zmax)
             for gr_id, gr in block.gratings.items():
                 pos = gr.position
                 self._render_grating(img, block_id, pos.u, pos.v,
-                                     Y_center_um, Z_center_um, Ymin, Ymax, Zmin, Zmax)
+                                     X_center_um, Z_center_um, Xmin, Xmax, Zmin, Zmax)
 
-        img = self._apply_focus_blur(img, X_um)
+        img = self._apply_focus_blur(img, Y_um)
         img = np.clip(img * (self.exposure_time / 0.02), 0, 65535).astype(np.uint16)
         return img
 
-    def _stage_to_pixel(self, Y_um: float, Z_um: float,
-                        Y_center_um: float, Z_center_um: float) -> Tuple[int, int]:
-        """Convert stage coordinates (µm) to pixel indices."""
-        px = int(round(self.sensor_width/2 + (Y_um - Y_center_um)/self.um_per_pixel))
+    def _stage_to_pixel(self, X_um: float, Z_um: float,
+                        X_center_um: float, Z_center_um: float) -> Tuple[int, int]:
+        """Convert stage coordinates (µm) to pixel indices.
+        
+        Args:
+            X_um: Horizontal stage position
+            Z_um: Vertical stage position
+            X_center_um: Current horizontal center
+            Z_center_um: Current vertical center
+        """
+        px = int(round(self.sensor_width/2 + (X_um - X_center_um)/self.um_per_pixel))
         py = int(round(self.sensor_height/2 + (Z_um - Z_center_um)/self.um_per_pixel))
         return px, py
 
@@ -171,10 +194,10 @@ class MockCamera(AndorCameraBase):
     # Render Objects
     # ========================================================
     def _render_fiducial(self, img, block_id, u_local, v_local, corner,
-                         Yc, Zc, Ymin, Ymax, Zmin, Zmax):
+                         Xc, Zc, Xmin, Xmax, Zmin, Zmax):
         """Draw an L-shaped fiducial marker."""
-        Y_um, Z_um = self.converter.block_local_to_stage(block_id, u_local, v_local)
-        if not (Ymin <= Y_um <= Ymax and Zmin <= Z_um <= Zmax):
+        X_um, Z_um = self.converter.block_local_to_stage(block_id, u_local, v_local)
+        if not (Xmin <= X_um <= Xmax and Zmin <= Z_um <= Zmax):
             return
 
         size_um = 40
@@ -194,16 +217,16 @@ class MockCamera(AndorCameraBase):
         h_end = self.converter.block_local_to_stage(block_id, u_local + horiz[0], v_local + horiz[1])
         v_end = self.converter.block_local_to_stage(block_id, u_local + vert[0], v_local + vert[1])
 
-        p0 = self._stage_to_pixel(Y_um, Z_um, Yc, Zc)
-        ph = self._stage_to_pixel(*h_end, Yc, Zc)
-        pv = self._stage_to_pixel(*v_end, Yc, Zc)
+        p0 = self._stage_to_pixel(X_um, Z_um, Xc, Zc)
+        ph = self._stage_to_pixel(*h_end, Xc, Zc)
+        pv = self._stage_to_pixel(*v_end, Xc, Zc)
 
         cv2.line(img, p0, ph, brightness, thickness_px)
         cv2.line(img, p0, pv, brightness, thickness_px)
         cv2.circle(img, p0, thickness_px//2, brightness, -1)
 
     def _render_waveguide(self, img, block_id, u_start, u_end, v_center, width,
-                          Yc, Zc, Ymin, Ymax, Zmin, Zmax):
+                          Xc, Zc, Xmin, Xmax, Zmin, Zmax):
         """Draw rectangular waveguide."""
         v_bottom, v_top = v_center - width/2, v_center + width/2
         corners = [
@@ -212,26 +235,30 @@ class MockCamera(AndorCameraBase):
             self.converter.block_local_to_stage(block_id, u_end, v_top),
             self.converter.block_local_to_stage(block_id, u_start, v_top),
         ]
-        if not any(Ymin <= Y <= Ymax and Zmin <= Z <= Zmax for Y, Z in corners):
+        if not any(Xmin <= X <= Xmax and Zmin <= Z <= Zmax for X, Z in corners):
             return
-        pts = [self._stage_to_pixel(Y, Z, Yc, Zc) for Y, Z in corners]
+        pts = [self._stage_to_pixel(X, Z, Xc, Zc) for X, Z in corners]
         cv2.fillPoly(img, [np.array(pts, dtype=np.int32)], 3000)
 
     def _render_grating(self, img, block_id, u_local, v_local,
-                        Yc, Zc, Ymin, Ymax, Zmin, Zmax):
+                        Xc, Zc, Xmin, Xmax, Zmin, Zmax):
         """Draw grating coupler as bright circle."""
-        Y_um, Z_um = self.converter.block_local_to_stage(block_id, u_local, v_local)
-        if not (Ymin <= Y_um <= Ymax and Zmin <= Z_um <= Zmax):
+        X_um, Z_um = self.converter.block_local_to_stage(block_id, u_local, v_local)
+        if not (Xmin <= X_um <= Xmax and Zmin <= Z_um <= Zmax):
             return
-        px, py = self._stage_to_pixel(Y_um, Z_um, Yc, Zc)
+        px, py = self._stage_to_pixel(X_um, Z_um, Xc, Zc)
         cv2.circle(img, (px, py), 8, 2000, -1)
 
     # ========================================================
     # Focus & Effects
     # ========================================================
-    def _apply_focus_blur(self, img, X_um):
-        """Apply Gaussian blur proportional to defocus (µm)."""
-        sigma = abs(X_um) * 0.001
+    def _apply_focus_blur(self, img, Y_um):
+        """Apply Gaussian blur proportional to defocus (µm).
+        
+        Args:
+            Y_um: Focus position (Y axis controls focus)
+        """
+        sigma = abs(Y_um) * 0.001
         if sigma > 0:
             img = cv2.GaussianBlur(img, (0, 0), sigma)
         return img
@@ -261,11 +288,11 @@ if __name__ == "__main__":
 
     img_single = np.zeros((cam.sensor_height, cam.sensor_width), dtype=np.uint16)
     cam._render_fiducial(img_single, block_id, fid.u, fid.v, "top_left",
-                         Yc=0, Zc=0, Ymin=-1000, Ymax=1000, Zmin=-1000, Zmax=1000)
+                         Xc=0, Zc=0, Xmin=-1000, Xmax=1000, Zmin=-1000, Zmax=1000)
 
     plt.figure(figsize=(5, 5))
     plt.imshow(img_single, cmap="gray", origin="lower")
-    plt.title("Single Fiducial (Top Left, µm-based)")
+    plt.title("Single Fiducial (Top Left, µm-based) - X/Y SWAPPED")
     plt.tight_layout()
     plt.savefig("fiducial_test_v3.png", dpi=200)
     plt.show()
@@ -279,8 +306,8 @@ if __name__ == "__main__":
 
     plt.figure(figsize=(8, 8))
     plt.imshow(img_full, cmap="gray", origin="lower")
-    plt.title("MockCameraV3 - Full Frame (µm-based)")
-    plt.xlabel("Y (px)")
+    plt.title("MockCameraV3 - Full Frame (X=horizontal, Y=focus)")
+    plt.xlabel("X (px)")
     plt.ylabel("Z (px)")
     plt.tight_layout()
     plt.savefig("mock_camera_full_frame_v3.png", dpi=200)

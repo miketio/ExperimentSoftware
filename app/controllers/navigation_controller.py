@@ -150,7 +150,7 @@ class NavigationWorker(QThread):
                 
                 # Run autofocus synchronously
                 success = self.autofocus_controller.run_autofocus(
-                    axis='x',
+                    axis='y',
                     scan_range_um=10.0,
                     step_um=0.5,
                     enable_plot=False

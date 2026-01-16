@@ -245,7 +245,7 @@ class MultiMCSManager:
         self.xyz_stage = SmarActXYZStage(
             locator=xyz_device.locator,
             axis_map=axis_map,
-            options="sync,reset"
+            options="sync"
         )
         
         print(f"[MultiMCSManager] ✅ Created XYZ stage from MCS[{xyz_device.index}]")
@@ -365,7 +365,40 @@ class MultiMCSManager:
         
         print("="*70 + "\n")
 
-
+    def close_all(self):
+        """
+        Close all MCS devices and stages.
+        
+        Call this during application shutdown to properly cleanup all hardware.
+        """
+        print("[MultiMCSManager] Closing all devices...")
+        
+        # Close XYZ stage
+        if self.xyz_stage is not None:
+            try:
+                self.xyz_stage.close()
+                self.xyz_stage = None
+                print("[MultiMCSManager]   ✅ XYZ stage closed")
+            except Exception as e:
+                print(f"[MultiMCSManager]   ❌ Error closing XYZ stage: {e}")
+        
+        # Close filter stage
+        if self.filter_stage is not None:
+            try:
+                self.filter_stage.close()
+                self.filter_stage = None
+                print("[MultiMCSManager]   ✅ Filter stage closed")
+            except Exception as e:
+                print(f"[MultiMCSManager]   ❌ Error closing filter stage: {e}")
+        
+        # Close any open device handles
+        for device in self.devices:
+            try:
+                self._close_device(device)
+            except Exception as e:
+                print(f"[MultiMCSManager]   ⚠️  Error closing device {device.index}: {e}")
+        
+        print("[MultiMCSManager] All devices closed")
 # =============================================================================
 # Example Usage
 # =============================================================================

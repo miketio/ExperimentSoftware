@@ -51,6 +51,12 @@ class SystemSignals(QObject):
     color_scale_changed = pyqtSignal()
     colormap_changed = pyqtSignal(str)  # colormap name
     
+    # ✅ NEW: Camera stream control
+    request_stop_camera_stream = pyqtSignal()
+    request_start_camera_stream = pyqtSignal()
+    camera_stream_stopped = pyqtSignal()
+    camera_stream_started = pyqtSignal()
+    
     # ========================================================================
     # Alignment Signals
     # ========================================================================

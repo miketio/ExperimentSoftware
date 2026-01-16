@@ -115,7 +115,7 @@ class SetupPanelWidget(QWidget):
         axis_row = QHBoxLayout()
         axis_row.addWidget(QLabel("Axis:"))
         self.af_axis = QComboBox()
-        self.af_axis.addItems(['X (Focus)', 'Y', 'Z'])
+        self.af_axis.addItems(['Y (Focus)', 'X', 'Z'])
         axis_row.addWidget(self.af_axis)
         axis_row.addStretch()
         af_layout.addLayout(axis_row)

@@ -1,5 +1,5 @@
 """
-System State Management
+System State Management - WITH FILTER SUPPORT
 
 Centralized state for the entire application. All coordinates in micrometers (µm).
 Thread-safe for reading, updates should happen in main thread via signals.
@@ -65,11 +65,22 @@ class CameraState:
     zoom_level: float = 1.0
     show_crosshair: bool = True
     show_scale_bar: bool = True
-    show_fourier: bool = False  # NEW: Fourier transform mode
+    show_fourier: bool = False  # Fourier transform mode
     beam_position_px: Tuple[int, int] = (512, 512)  # Beam location in pixels
     show_beam_indicator: bool = True  # Show beam crosshair
     um_per_pixel: float = 0.3  # Micrometers per pixel
+
+
+@dataclass
+class FilterState:
+    """K-space filter stage state."""
+    position_nm: int = 0  # Current position in nanometers
+    position_um: float = 0.0  # Current position in micrometers
+    connected: bool = False  # Filter stage connected
+    is_sweeping: bool = False  # Currently running sweep
+    sweep_progress: float = 0.0  # Sweep progress (0-100%)
     
+
 class SystemState:
     """
     Centralized application state.
@@ -97,6 +108,9 @@ class SystemState:
         
         # Camera
         self.camera = CameraState()
+        
+        # ✅ NEW: Filter stage
+        self.filter = FilterState()
         
         # Configuration
         self.alignment_config = {
@@ -230,6 +244,10 @@ class SystemState:
                 'colormap': self.camera.colormap,
                 'zoom_level': self.camera.zoom_level,
             },
+            'filter': {
+                'position_nm': self.filter.position_nm,
+                'position_um': self.filter.position_um,
+            },
             'config': {
                 'alignment': self.alignment_config,
                 'autofocus': self.autofocus_config,
@@ -286,6 +304,11 @@ class SystemState:
         self.camera.color_scale_auto = cam_data.get('color_scale_auto', True)
         self.camera.colormap = cam_data.get('colormap', 'gray')
         self.camera.zoom_level = cam_data.get('zoom_level', 1.0)
+        
+        # Filter
+        filter_data = data.get('filter', {})
+        self.filter.position_nm = filter_data.get('position_nm', 0)
+        self.filter.position_um = filter_data.get('position_um', 0.0)
         
         # Config
         config_data = data.get('config', {})

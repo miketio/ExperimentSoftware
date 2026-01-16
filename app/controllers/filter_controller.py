@@ -1,7 +1,10 @@
+# app/controllers/filter_controller.py
 """
 Filter Stage Controller
 
 Manages K-space filtering sweeps with image capture.
+Works with both real FilterStage and MockFilterStage.
+Includes camera stream conflict resolution.
 """
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -57,6 +60,7 @@ class FilterSweepWorker(QThread):
             output_path.mkdir(parents=True, exist_ok=True)
             
             results = []
+            failed_count = 0
             
             for idx, target_nm in enumerate(positions_nm):
                 if self.cancelled:
@@ -102,7 +106,9 @@ class FilterSweepWorker(QThread):
                     self.image_captured.emit(idx, actual_um, image)
                     
                 except Exception as e:
+                    failed_count += 1
                     print(f"⚠️  Failed to capture at {actual_nm}nm: {e}")
+                    # Continue with next position instead of aborting
             
             # Save metadata
             metadata = {
@@ -113,6 +119,8 @@ class FilterSweepWorker(QThread):
                     'total_positions': total
                 },
                 'results': results,
+                'successful_captures': len(results),
+                'failed_captures': failed_count,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -124,6 +132,7 @@ class FilterSweepWorker(QThread):
             # Complete
             self.complete.emit({
                 'positions': len(results),
+                'failed': failed_count,
                 'output_dir': str(output_path),
                 'metadata_file': str(metadata_file)
             })
@@ -135,7 +144,12 @@ class FilterSweepWorker(QThread):
 
 
 class FilterController(QObject):
-    """Controller for filter stage operations."""
+    """
+    Controller for filter stage operations.
+    
+    Works with both real FilterStage and MockFilterStage.
+    Handles camera stream coordination during sweeps.
+    """
     
     def __init__(self, state, signals, filter_stage, camera, parent=None):
         super().__init__(parent)
@@ -150,6 +164,23 @@ class FilterController(QObject):
         # Filter stage limits (µm)
         self.limit_min = 0.0
         self.limit_max = 100.0
+        
+        # Detect hardware type
+        hardware_type = type(filter_stage).__name__
+        print(f"[FilterController] Initialized with {hardware_type}")
+        
+        # Initial position update
+        self._update_position()
+    
+    def _update_position(self):
+        """Update state with current filter position."""
+        try:
+            pos_nm = self.filter_stage.get_position()
+            self.state.filter.position_nm = pos_nm
+            # Emit signal if you have one for filter position
+            # self.signals.filter_position_changed.emit(pos_nm)
+        except Exception as e:
+            print(f"[FilterController] Warning: Failed to read position: {e}")
     
     def move_to_position(self, pos_um: float) -> bool:
         """Move filter to specific position."""
@@ -178,11 +209,17 @@ class FilterController(QObject):
             self.signals.status_message.emit(
                 f"Filter moved to {actual_um:.3f}µm"
             )
+            
+            self._update_position()
             return True
             
         except Exception as e:
             self.signals.error_occurred.emit("Move Failed", str(e))
             return False
+    
+    def home(self) -> bool:
+        """Move filter to home position (0 µm)."""
+        return self.move_to_position(0.0)
     
     def run_sweep(
         self,
@@ -209,10 +246,22 @@ class FilterController(QObject):
             self.signals.error_occurred.emit("Invalid Range", f"End position out of limits")
             return False
         
+        if step_um <= 0:
+            self.signals.error_occurred.emit("Invalid Step", "Step size must be positive")
+            return False
+        
         # Default output directory
         if output_dir is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_dir = f"results/filter_sweep_{timestamp}"
+        
+        # ✅ CRITICAL: Stop camera stream to prevent conflicts
+        print("[FilterController] Stopping camera stream before sweep")
+        self.signals.request_stop_camera_stream.emit()
+        
+        # Small delay to ensure stream stops
+        import time
+        time.sleep(0.3)
         
         # Create worker
         self.worker = FilterSweepWorker(
@@ -243,6 +292,7 @@ class FilterController(QObject):
     def cancel_sweep(self):
         """Cancel running sweep."""
         if self.worker and self.is_running:
+            print("[FilterController] Cancelling sweep")
             self.worker.cancel()
     
     def _on_progress(self, current: int, total: int, status: str):
@@ -257,17 +307,55 @@ class FilterController(QObject):
     def _on_complete(self, results: dict):
         """Handle sweep completion."""
         self.is_running = False
+        
+        # ✅ CRITICAL: Restart camera stream after sweep
+        print("[FilterController] Restarting camera stream after sweep")
+        self.signals.request_start_camera_stream.emit()
+        
         self.signals.busy_ended.emit()
         
-        self.signals.status_message.emit(
-            f"✅ Sweep complete! {results['positions']} images saved to {results['output_dir']}"
-        )
+        # Update position
+        self._update_position()
         
-        # Could open results directory
+        # Show results
+        if results['failed'] > 0:
+            self.signals.warning_occurred.emit(
+                "Sweep Complete with Errors",
+                f"✅ {results['positions']} images saved\n"
+                f"⚠️  {results['failed']} captures failed\n\n"
+                f"Output: {results['output_dir']}"
+            )
+        else:
+            self.signals.status_message.emit(
+                f"✅ Sweep complete! {results['positions']} images saved to {results['output_dir']}"
+            )
+        
         print(f"[FilterController] Sweep saved to: {results['output_dir']}")
     
     def _on_error(self, error: str):
         """Handle error."""
         self.is_running = False
+        
+        # ✅ CRITICAL: Restart camera stream even on error
+        print("[FilterController] Restarting camera stream after error")
+        self.signals.request_start_camera_stream.emit()
+        
         self.signals.busy_ended.emit()
         self.signals.error_occurred.emit("Sweep Failed", error)
+    
+    def get_status(self) -> dict:
+        """Get filter stage status."""
+        try:
+            return self.filter_stage.get_status()
+        except Exception as e:
+            return {
+                'connected': False,
+                'error': str(e)
+            }
+    
+    def print_status(self):
+        """Print filter stage status to console."""
+        try:
+            self.filter_stage.print_status()
+        except Exception as e:
+            print(f"[FilterController] Error getting status: {e}")

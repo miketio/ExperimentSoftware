@@ -1,4 +1,10 @@
-"""Stage Control Widget - Manual stage positioning."""
+"""Stage Control Widget - Manual stage positioning.
+
+COORDINATE SYSTEM:
+- X axis: LEFT/RIGHT (horizontal movement)
+- Y axis: FOCUS (in/out of focus)
+- Z axis: UP/DOWN (vertical movement)
+"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -29,8 +35,9 @@ class StageMoveWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+
 class GoToWorker(QThread):
-    """Worker thread for Go To positioning (sequential X→Y→Z)."""
+    """Worker thread for Go To positioning (sequential Y→X→Z)."""
     finished = pyqtSignal()
     error = pyqtSignal(str)
     
@@ -43,16 +50,23 @@ class GoToWorker(QThread):
     
     def run(self):
         try:
-            # Move sequentially to avoid collision
-            self.stage.move_abs('x', self.x)
+            # Move sequentially to avoid collision (Y focus first, then X/Z)
             self.stage.move_abs('y', self.y)
+            self.stage.move_abs('x', self.x)
             self.stage.move_abs('z', self.z)
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))
-            
+
+
 class StageControlWidget(QWidget):
-    """Stage jog and positioning controls."""
+    """Stage jog and positioning controls.
+    
+    NEW COORDINATE SYSTEM:
+    - X = LEFT/RIGHT
+    - Y = FOCUS
+    - Z = UP/DOWN
+    """
     
     def __init__(self, state, signals, stage, parent=None):
         super().__init__(parent)
@@ -88,32 +102,32 @@ class StageControlWidget(QWidget):
         jog_group = QGroupBox("Jog Controls")
         jog_layout = QVBoxLayout()
         
-        # Step size
+        # Step size - UPDATED with new values
         step_layout = QHBoxLayout()
         step_layout.addWidget(QLabel("Step Size (µm):"))
         self.step_combo = QComboBox()
-        self.step_combo.addItems(['0.1', '1', '10', '50', '100', '500'])
+        self.step_combo.addItems(['0.1', '0.5', '1', '5', '10', '20', '50', '100', '500'])
         self.step_combo.setCurrentText('10')
         self.step_combo.currentTextChanged.connect(self._on_step_changed)
         step_layout.addWidget(self.step_combo)
         step_layout.addStretch()
         jog_layout.addLayout(step_layout)
         
-        # Arrow buttons
+        # Arrow buttons - X/Z axes (horizontal/vertical)
         arrows = QWidget()
         arrows_layout = QGridLayout()
         arrows_layout.setSpacing(5)
         
-        # Y axis (horizontal now: left/right)
-        self.btn_y_left = QPushButton("← Y-")
-        self.btn_y_left.clicked.connect(lambda: self._jog('y', -1))
-        arrows_layout.addWidget(self.btn_y_left, 1, 0)
+        # X axis (horizontal: left/right) - CHANGED from Y
+        self.btn_x_left = QPushButton("← X-")
+        self.btn_x_left.clicked.connect(lambda: self._jog('x', -1))
+        arrows_layout.addWidget(self.btn_x_left, 1, 0)
 
-        self.btn_y_right = QPushButton("Y+ →")
-        self.btn_y_right.clicked.connect(lambda: self._jog('y', 1))
-        arrows_layout.addWidget(self.btn_y_right, 1, 2)
+        self.btn_x_right = QPushButton("X+ →")
+        self.btn_x_right.clicked.connect(lambda: self._jog('x', 1))
+        arrows_layout.addWidget(self.btn_x_right, 1, 2)
 
-        # Z axis (vertical now: up/down)
+        # Z axis (vertical: up/down) - UNCHANGED
         self.btn_z_up = QPushButton("↑ Z+")
         self.btn_z_up.clicked.connect(lambda: self._jog('z', 1))
         arrows_layout.addWidget(self.btn_z_up, 0, 1)
@@ -130,16 +144,16 @@ class StageControlWidget(QWidget):
         arrows.setLayout(arrows_layout)
         jog_layout.addWidget(arrows)
         
-        # X axis (focus)
-        x_layout = QHBoxLayout()
-        self.btn_x_down = QPushButton("X- (Out of focus)")
-        self.btn_x_down.clicked.connect(lambda: self._jog('x', -1))
-        x_layout.addWidget(self.btn_x_down)
+        # Y axis (focus) - CHANGED from X
+        y_layout = QHBoxLayout()
+        self.btn_y_down = QPushButton("Y- (Out of focus)")
+        self.btn_y_down.clicked.connect(lambda: self._jog('y', -1))
+        y_layout.addWidget(self.btn_y_down)
         
-        self.btn_x_up = QPushButton("X+ (Into focus)")
-        self.btn_x_up.clicked.connect(lambda: self._jog('x', 1))
-        x_layout.addWidget(self.btn_x_up)
-        jog_layout.addLayout(x_layout)
+        self.btn_y_up = QPushButton("Y+ (Into focus)")
+        self.btn_y_up.clicked.connect(lambda: self._jog('y', 1))
+        y_layout.addWidget(self.btn_y_up)
+        jog_layout.addLayout(y_layout)
         
         jog_group.setLayout(jog_layout)
         layout.addWidget(jog_group)
@@ -189,40 +203,40 @@ class StageControlWidget(QWidget):
         self.move_worker.start()
         
     def _go_to_position(self):
-            """Move to specified position (sequential X→Y→Z)."""
-            if self.stage is None:
-                return
-            
-            # Get target positions
-            target_x = self.goto_inputs['x'].value()
-            target_y = self.goto_inputs['y'].value()
-            target_z = self.goto_inputs['z'].value()
-            
-            self.signals.status_message.emit(
-                f"Moving to X={target_x:.2f}, Y={target_y:.2f}, Z={target_z:.2f}µm..."
-            )
-            
-            # Create worker for sequential movement
-            self.move_worker = GoToWorker(
-                self.stage, target_x, target_y, target_z
-            )
-            self.move_worker.finished.connect(
-                lambda: self.signals.stage_move_complete.emit()
-            )
-            self.move_worker.error.connect(
-                lambda e: self.signals.stage_error.emit(e)
-            )
-            self.move_worker.finished.connect(
-                lambda: self.signals.status_message.emit("Go To complete")
-            )
-            
-            # Disable button during movement
-            self.btn_goto.setEnabled(False)
-            self.move_worker.finished.connect(
-                lambda: self.btn_goto.setEnabled(True)
-            )
-            
-            self.move_worker.start()
+        """Move to specified position (sequential Y→X→Z)."""
+        if self.stage is None:
+            return
+        
+        # Get target positions
+        target_x = self.goto_inputs['x'].value()
+        target_y = self.goto_inputs['y'].value()
+        target_z = self.goto_inputs['z'].value()
+        
+        self.signals.status_message.emit(
+            f"Moving to X={target_x:.2f}, Y={target_y:.2f}, Z={target_z:.2f}µm..."
+        )
+        
+        # Create worker for sequential movement
+        self.move_worker = GoToWorker(
+            self.stage, target_x, target_y, target_z
+        )
+        self.move_worker.finished.connect(
+            lambda: self.signals.stage_move_complete.emit()
+        )
+        self.move_worker.error.connect(
+            lambda e: self.signals.stage_error.emit(e)
+        )
+        self.move_worker.finished.connect(
+            lambda: self.signals.status_message.emit("Go To complete")
+        )
+        
+        # Disable button during movement
+        self.btn_goto.setEnabled(False)
+        self.move_worker.finished.connect(
+            lambda: self.btn_goto.setEnabled(True)
+        )
+        
+        self.move_worker.start()
     
     def _update_position_display(self, axis: str, position: float):
         """Update position display."""
