@@ -2,7 +2,11 @@
 """
 Filter Stage - Single-axis MCS controller for K-space filtering
 
-This stage performs 1D sweeps to capture spectral data.
+UPDATED:
+- Extended range to ±15000 µm (±15,000,000 nm)
+- Clears hardware position limits on initialization
+- Multi-step movement for large distances to avoid issues
+- Position verification after moves
 """
 
 import ctypes as ct
@@ -19,24 +23,36 @@ class FilterStage:
     """
     Single-axis MCS stage for K-space filtering.
     
+    UPDATED: Extended range ±15000 µm with position limit management
+    
     Features:
     - 1D sweep with configurable range and step
     - Image capture at each position
     - Metadata logging
     - Progress callbacks
+    - Hardware position limit clearing
+    - Multi-step movement for large distances
     
     Usage:
         stage = FilterStage(locator="usb:id:1234")
         
         # Run sweep
         results = stage.run_sweep(
-            start_nm=0,
-            end_nm=100000,
+            start_nm=-15000000,
+            end_nm=15000000,
             step_nm=1000,
             camera=camera,
             output_dir="data/sweep_001"
         )
     """
+    
+    # ✅ UPDATED: Extended limits to ±15mm (±15,000,000 nm)
+    POSITION_LIMIT_MIN_NM = -15_000_000  # -15mm
+    POSITION_LIMIT_MAX_NM = 15_000_000   # +15mm
+    
+    # Multi-step movement threshold (if move > this, split into steps)
+    LARGE_MOVE_THRESHOLD_NM = 1_000_000  # 1mm
+    LARGE_MOVE_STEP_NM = 500_000         # 500µm per step
     
     def __init__(
         self,
@@ -86,6 +102,64 @@ class FilterStage:
         )
         if status == mcs.SA_OK:
             print(f"  Sensor type: {sensor_type.value}")
+        
+        # ✅ CRITICAL: Clear hardware position limits
+        self._configure_position_limits()
+    
+    def _configure_position_limits(self):
+        """
+        Configure (or remove) hardware position limits.
+        
+        SmarAct stages often have default limits that prevent full range movement.
+        We set them to our desired range.
+        """
+        print(f"[FilterStage] Configuring position limits...")
+        
+        channel = ct.c_ulong(self.axis_channel)
+        
+        # First, check current limits
+        min_pos = ct.c_long()
+        max_pos = ct.c_long()
+        
+        status = mcs.SA_GetPositionLimit_S(
+            self.mcsHandle,
+            channel,
+            min_pos,
+            max_pos
+        )
+        
+        if status == mcs.SA_OK:
+            print(f"  Current limits: {min_pos.value} to {max_pos.value} nm")
+            print(f"  Current limits: {min_pos.value/1e6:.3f} to {max_pos.value/1e6:.3f} mm")
+        
+        # Set new limits to our desired range
+        print(f"  Setting new limits: {self.POSITION_LIMIT_MIN_NM} to {self.POSITION_LIMIT_MAX_NM} nm")
+        print(f"  Setting new limits: {self.POSITION_LIMIT_MIN_NM/1e6:.3f} to {self.POSITION_LIMIT_MAX_NM/1e6:.3f} mm")
+        
+        status = mcs.SA_SetPositionLimit_S(
+            self.mcsHandle,
+            channel,
+            ct.c_long(self.POSITION_LIMIT_MIN_NM),
+            ct.c_long(self.POSITION_LIMIT_MAX_NM)
+        )
+        
+        if status == mcs.SA_OK:
+            print(f"  ✅ Position limits updated successfully")
+        else:
+            # Non-fatal - some sensors don't support limits
+            print(f"  ⚠️ Could not set position limits (error {status})")
+            print(f"     This may be normal for some sensor types")
+        
+        # Verify
+        status = mcs.SA_GetPositionLimit_S(
+            self.mcsHandle,
+            channel,
+            min_pos,
+            max_pos
+        )
+        
+        if status == mcs.SA_OK:
+            print(f"  Verified limits: {min_pos.value} to {max_pos.value} nm")
     
     def _exit_if_error(self, status: int):
         """Raise RuntimeError if status != SA_OK."""
@@ -102,17 +176,53 @@ class FilterStage:
         raise RuntimeError(f"FilterStage error: {msg}")
     
     # =========================================================================
-    # Basic Movement
+    # Basic Movement (UPDATED with multi-step support)
     # =========================================================================
     
-    def move_abs(self, pos_nm: int, hold_time_ms: int = 0):
+    def move_abs(self, pos_nm: int, hold_time_ms: int = 0, verify: bool = True):
         """
-        Move to absolute position.
+        Move to absolute position with optional multi-step for large distances.
         
         Args:
             pos_nm: Target position in nanometers
             hold_time_ms: Hold time after movement (milliseconds)
+            verify: If True, verify final position is within tolerance
         """
+        # Validate position is within limits
+        if not (self.POSITION_LIMIT_MIN_NM <= pos_nm <= self.POSITION_LIMIT_MAX_NM):
+            raise ValueError(
+                f"Position {pos_nm} nm ({pos_nm/1e6:.3f} mm) outside limits "
+                f"[{self.POSITION_LIMIT_MIN_NM/1e6:.3f}, {self.POSITION_LIMIT_MAX_NM/1e6:.3f}] mm"
+            )
+        
+        # Get current position
+        current_pos = self.get_position()
+        distance = abs(pos_nm - current_pos)
+        
+        print(f"[FilterStage] Moving from {current_pos/1000:.3f} to {pos_nm/1000:.3f} µm "
+              f"(distance: {distance/1000:.3f} µm)")
+        
+        # ✅ For large moves, split into steps to avoid issues
+        if distance > self.LARGE_MOVE_THRESHOLD_NM:
+            print(f"  Large move detected ({distance/1e6:.3f} mm) - using multi-step approach")
+            self._move_abs_multistep(current_pos, pos_nm, hold_time_ms)
+        else:
+            # Direct move for small distances
+            self._move_abs_direct(pos_nm, hold_time_ms)
+        
+        # ✅ Verify final position
+        if verify:
+            final_pos = self.get_position()
+            error = abs(final_pos - pos_nm)
+            
+            if error > 1000:  # 1µm tolerance
+                print(f"  ⚠️ Position error: {error} nm ({error/1000:.3f} µm)")
+                print(f"     Target: {pos_nm} nm, Actual: {final_pos} nm")
+            else:
+                print(f"  ✅ Position verified: {final_pos} nm (error: {error} nm)")
+    
+    def _move_abs_direct(self, pos_nm: int, hold_time_ms: int = 0):
+        """Direct absolute move (internal)."""
         channel = ct.c_ulong(self.axis_channel)
         position = ct.c_long(int(pos_nm))
         hold = ct.c_ulong(hold_time_ms)
@@ -125,7 +235,67 @@ class FilterStage:
         )
         self._exit_if_error(status)
         
-        time.sleep(0.2)  # Settle time
+        # Wait for move to complete
+        self._wait_for_stop()
+    
+    def _move_abs_multistep(self, start_nm: int, target_nm: int, hold_time_ms: int = 0):
+        """
+        Move in multiple steps for large distances.
+        
+        This helps avoid issues with:
+        - Position limit violations
+        - Motor step size limitations
+        - Communication timeouts
+        """
+        direction = 1 if target_nm > start_nm else -1
+        distance = abs(target_nm - start_nm)
+        
+        # Calculate number of steps
+        num_steps = int(np.ceil(distance / self.LARGE_MOVE_STEP_NM))
+        
+        print(f"  Multi-step move: {num_steps} steps of ~{self.LARGE_MOVE_STEP_NM/1000:.1f} µm")
+        
+        # Generate intermediate positions
+        positions = np.linspace(start_nm, target_nm, num_steps + 1)[1:]  # Exclude start
+        
+        for i, pos in enumerate(positions):
+            pos_int = int(pos)
+            print(f"    Step {i+1}/{num_steps}: {pos_int/1000:.3f} µm")
+            
+            self._move_abs_direct(pos_int, hold_time_ms if i == len(positions)-1 else 0)
+            
+            # Brief pause between steps
+            if i < len(positions) - 1:
+                time.sleep(0.1)
+    
+    def _wait_for_stop(self, timeout_s: float = 30.0):
+        """
+        Wait for stage to stop moving.
+        
+        Args:
+            timeout_s: Maximum time to wait (seconds)
+        """
+        channel = ct.c_ulong(self.axis_channel)
+        status_val = ct.c_ulong()
+        
+        start_time = time.time()
+        
+        while True:
+            status = mcs.SA_GetStatus_S(self.mcsHandle, channel, status_val)
+            self._exit_if_error(status)
+            
+            # Check if stopped
+            if status_val.value == mcs.SA_STOPPED_STATUS or status_val.value == mcs.SA_TARGET_STATUS:
+                break
+            
+            # Check timeout
+            if time.time() - start_time > timeout_s:
+                raise RuntimeError(f"Move timeout after {timeout_s}s")
+            
+            time.sleep(0.05)  # 50ms polling
+        
+        # Final settle time
+        time.sleep(0.2)
     
     def move_rel(self, shift_nm: int, hold_time_ms: int = 0):
         """
@@ -135,19 +305,11 @@ class FilterStage:
             shift_nm: Distance to move in nanometers
             hold_time_ms: Hold time after movement (milliseconds)
         """
-        channel = ct.c_ulong(self.axis_channel)
-        shift = ct.c_long(int(shift_nm))
-        hold = ct.c_ulong(hold_time_ms)
+        current_pos = self.get_position()
+        target_pos = current_pos + shift_nm
         
-        status = mcs.SA_GotoPositionRelative_S(
-            self.mcsHandle,
-            channel,
-            shift,
-            hold
-        )
-        self._exit_if_error(status)
-        
-        time.sleep(0.2)
+        # Use absolute move with validation
+        self.move_abs(target_pos, hold_time_ms)
     
     def get_position(self) -> int:
         """
@@ -195,16 +357,18 @@ class FilterStage:
             progress_callback: Optional function(current, total) for progress
         
         Returns:
-            dict with sweep results:
-                - positions: List of positions (nm)
-                - image_files: List of saved image paths
-                - metadata_file: Path to metadata JSON
-                - start_time: ISO timestamp
-                - duration_s: Total sweep time
+            dict with sweep results
         """
         print(f"[FilterStage] Starting sweep:")
-        print(f"  Range: {start_nm} to {end_nm} nm ({(end_nm-start_nm)/1000:.3f} µm)")
+        print(f"  Range: {start_nm} to {end_nm} nm ({(end_nm-start_nm)/1e6:.3f} mm)")
         print(f"  Step: {step_nm} nm ({step_nm/1000:.3f} µm)")
+        
+        # Validate range
+        if not (self.POSITION_LIMIT_MIN_NM <= start_nm <= self.POSITION_LIMIT_MAX_NM):
+            raise ValueError(f"Start position {start_nm} nm outside limits")
+        
+        if not (self.POSITION_LIMIT_MIN_NM <= end_nm <= self.POSITION_LIMIT_MAX_NM):
+            raise ValueError(f"End position {end_nm} nm outside limits")
         
         # Calculate positions
         positions = list(range(start_nm, end_nm + step_nm, step_nm))
@@ -223,8 +387,8 @@ class FilterStage:
         
         try:
             for idx, target_pos in enumerate(positions):
-                # Move to position
-                self.move_abs(target_pos)
+                # Move to position (with multi-step support)
+                self.move_abs(target_pos, verify=False)  # Skip verification in loop for speed
                 
                 # Wait for settling
                 time.sleep(settle_time_s)
@@ -252,7 +416,7 @@ class FilterStage:
                           f"→ {image_filename}")
                 
                 except Exception as e:
-                    print(f"  ⚠️  Failed to capture at position {actual_pos}nm: {e}")
+                    print(f"  ⚠️ Failed to capture at position {actual_pos}nm: {e}")
                     image_files.append(None)
                 
                 # Progress callback
@@ -260,7 +424,7 @@ class FilterStage:
                     progress_callback(idx + 1, num_positions)
         
         except KeyboardInterrupt:
-            print("\n[FilterStage] ⚠️  Sweep interrupted by user")
+            print("\n[FilterStage] ⚠️ Sweep interrupted by user")
         
         # Calculate duration
         end_time = datetime.now()
@@ -287,7 +451,11 @@ class FilterStage:
             },
             'hardware': {
                 'mcs_locator': self.locator,
-                'axis_channel': self.axis_channel
+                'axis_channel': self.axis_channel,
+                'position_limits_nm': {
+                    'min': self.POSITION_LIMIT_MIN_NM,
+                    'max': self.POSITION_LIMIT_MAX_NM
+                }
             }
         }
         
@@ -342,13 +510,26 @@ class FilterStage:
             
             status_name = status_names.get(status.value, f'UNKNOWN({status.value})')
             
+            # Get position limits
+            min_pos = ct.c_long()
+            max_pos = ct.c_long()
+            mcs.SA_GetPositionLimit_S(self.mcsHandle, channel, min_pos, max_pos)
+            
             return {
                 'connected': not self._closed,
                 'position_nm': pos,
                 'position_um': pos / 1000.0,
                 'status': status_name,
                 'locator': self.locator,
-                'channel': self.axis_channel
+                'channel': self.axis_channel,
+                'limits_nm': {
+                    'min': min_pos.value,
+                    'max': max_pos.value
+                },
+                'limits_um': {
+                    'min': min_pos.value / 1000.0,
+                    'max': max_pos.value / 1000.0
+                }
             }
         except Exception as e:
             return {
@@ -370,6 +551,11 @@ class FilterStage:
         if status.get('connected'):
             print(f"Position:  {status['position_nm']} nm ({status['position_um']:.3f} µm)")
             print(f"Status:    {status.get('status', 'UNKNOWN')}")
+            
+            if 'limits_nm' in status:
+                lim = status['limits_nm']
+                print(f"Limits:    {lim['min']} to {lim['max']} nm")
+                print(f"           ({lim['min']/1e6:.3f} to {lim['max']/1e6:.3f} mm)")
         else:
             print(f"Error:     {status.get('error', 'Unknown')}")
         
@@ -403,11 +589,10 @@ class FilterStage:
 # =============================================================================
 
 if __name__ == "__main__":
-    print("FilterStage Test")
+    print("FilterStage Test - Extended Range")
     print("="*70)
     
     # Note: Replace with actual MCS locator
-    # This example assumes you've run multi_mcs_manager.py first
     
     try:
         # Create filter stage (use actual locator from discovery)
@@ -417,18 +602,28 @@ if __name__ == "__main__":
         stage.print_status()
         
         # Test movement
-        print("\nTest: Basic movement")
+        print("\nTest: Movement across extended range")
         print("-"*70)
         
-        print("Moving to 10 µm (10000 nm)...")
-        stage.move_abs(10000)
-        pos = stage.get_position()
-        print(f"Actual position: {pos} nm ({pos/1000:.3f} µm)")
+        # Test positions (µm → nm)
+        test_positions_um = [0, 100, -100, 1000, -1000, 5000, -5000]
         
-        print("\nMoving relative by +5 µm...")
-        stage.move_rel(5000)
-        pos = stage.get_position()
-        print(f"New position: {pos} nm ({pos/1000:.3f} µm)")
+        for pos_um in test_positions_um:
+            pos_nm = int(pos_um * 1000)
+            print(f"\nMoving to {pos_um} µm ({pos_nm} nm)...")
+            
+            try:
+                stage.move_abs(pos_nm)
+                actual_nm = stage.get_position()
+                actual_um = actual_nm / 1000
+                error_um = abs(actual_um - pos_um)
+                
+                print(f"  Target: {pos_um} µm")
+                print(f"  Actual: {actual_um:.3f} µm")
+                print(f"  Error:  {error_um:.3f} µm")
+                
+            except Exception as e:
+                print(f"  ❌ Failed: {e}")
         
         # Home
         print("\nReturning to home...")

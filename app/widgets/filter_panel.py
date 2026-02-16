@@ -1,7 +1,11 @@
 """
-Filter Stage Control Panel
+Filter Stage Control Panel - UPDATED for ±15mm range
 
-UI for K-space filtering operations.
+CHANGES:
+- Extended all range controls to ±15000 µm
+- Updated quick position buttons
+- Larger default step size for full range
+- FIXED: Manual position input now works correctly (was going to 0)
 """
 
 from PyQt6.QtWidgets import (
@@ -12,7 +16,7 @@ from PyQt6.QtCore import QTimer
 
 
 class FilterPanelWidget(QWidget):
-    """Control panel for filter stage."""
+    """Control panel for filter stage - UPDATED for ±15mm range."""
     
     def __init__(self, state, signals, filter_controller, parent=None):
         super().__init__(parent)
@@ -45,6 +49,14 @@ class FilterPanelWidget(QWidget):
         )
         status_layout.addWidget(self.position_label)
         
+        # Exposure time display
+        self.exposure_label = QLabel("Camera Exposure: -- ms")
+        self.exposure_label.setStyleSheet(
+            "QLabel { font-family: monospace; font-size: 10pt; "
+            "background-color: #1E1E1E; color: cyan; padding: 5px; }"
+        )
+        status_layout.addWidget(self.exposure_label)
+        
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
         
@@ -54,12 +66,12 @@ class FilterPanelWidget(QWidget):
         manual_group = QGroupBox("Manual Position Control")
         manual_layout = QVBoxLayout()
         
-        # Go to position
+        # Go to position - ✅ UPDATED RANGE to ±15000
         goto_row = QHBoxLayout()
         goto_row.addWidget(QLabel("Target Position:"))
         
         self.goto_spin = QDoubleSpinBox()
-        self.goto_spin.setRange(0, 200)
+        self.goto_spin.setRange(-15000, 15000)  # ✅ Changed from (-8000, 100)
         self.goto_spin.setValue(0)
         self.goto_spin.setSuffix(" µm")
         self.goto_spin.setDecimals(3)
@@ -74,16 +86,28 @@ class FilterPanelWidget(QWidget):
         
         manual_layout.addLayout(goto_row)
         
-        # Quick positions
-        quick_row = QHBoxLayout()
-        quick_row.addWidget(QLabel("Quick:"))
+        # Quick positions - ✅ UPDATED with new range
+        quick_row1 = QHBoxLayout()
+        quick_row1.addWidget(QLabel("Negative:"))
         
-        for pos_um in [0, 25, 50, 75, 100]:
+        for pos_um in [-15000, -10000, -5000, -1000]:
             btn = QPushButton(f"{pos_um}µm")
-            btn.clicked.connect(lambda checked, p=pos_um: self._goto_position(p))
-            quick_row.addWidget(btn)
+            # ✅ FIXED: Call controller directly, don't use _goto_position with argument
+            btn.clicked.connect(lambda checked, p=pos_um: self.filter.move_to_position(p))
+            quick_row1.addWidget(btn)
         
-        manual_layout.addLayout(quick_row)
+        manual_layout.addLayout(quick_row1)
+        
+        quick_row2 = QHBoxLayout()
+        quick_row2.addWidget(QLabel("Positive:"))
+        
+        for pos_um in [0, 1000, 5000, 10000, 15000]:
+            btn = QPushButton(f"{pos_um}µm")
+            # ✅ FIXED: Call controller directly, don't use _goto_position with argument
+            btn.clicked.connect(lambda checked, p=pos_um: self.filter.move_to_position(p))
+            quick_row2.addWidget(btn)
+        
+        manual_layout.addLayout(quick_row2)
         
         manual_group.setLayout(manual_layout)
         layout.addWidget(manual_group)
@@ -94,32 +118,32 @@ class FilterPanelWidget(QWidget):
         sweep_group = QGroupBox("Sweep Configuration")
         sweep_layout = QVBoxLayout()
         
-        # Range
+        # Range - ✅ UPDATED RANGE to ±15000
         range_row = QHBoxLayout()
         range_row.addWidget(QLabel("Start:"))
         self.sweep_start = QDoubleSpinBox()
-        self.sweep_start.setRange(0, 200)
-        self.sweep_start.setValue(0)
+        self.sweep_start.setRange(-15000, 15000)  # ✅ Changed from (-8000, 100)
+        self.sweep_start.setValue(-15000)         # ✅ Changed default
         self.sweep_start.setSuffix(" µm")
         self.sweep_start.setDecimals(3)
         range_row.addWidget(self.sweep_start)
         
         range_row.addWidget(QLabel("End:"))
         self.sweep_end = QDoubleSpinBox()
-        self.sweep_end.setRange(0, 200)
-        self.sweep_end.setValue(100)
+        self.sweep_end.setRange(-15000, 15000)   # ✅ Changed from (-8000, 100)
+        self.sweep_end.setValue(15000)           # ✅ Changed default
         self.sweep_end.setSuffix(" µm")
         self.sweep_end.setDecimals(3)
         range_row.addWidget(self.sweep_end)
         
         sweep_layout.addLayout(range_row)
         
-        # Step size
+        # Step size - ✅ UPDATED for larger range
         step_row = QHBoxLayout()
         step_row.addWidget(QLabel("Step Size:"))
         self.sweep_step = QDoubleSpinBox()
-        self.sweep_step.setRange(0.001, 10)
-        self.sweep_step.setValue(1.0)
+        self.sweep_step.setRange(0.001, 1000)     # ✅ Increased max from 100
+        self.sweep_step.setValue(100.0)           # ✅ Larger default for full range
         self.sweep_step.setSuffix(" µm")
         self.sweep_step.setDecimals(3)
         step_row.addWidget(self.sweep_step)
@@ -192,20 +216,37 @@ class FilterPanelWidget(QWidget):
         """Update current position display."""
         if self.filter.filter_stage is None:
             self.position_label.setText("Filter Stage: Not Connected")
+            self.exposure_label.setText("Camera Exposure: N/A")
             return
         
         try:
             pos_nm = self.filter.filter_stage.get_position()
             pos_um = pos_nm / 1000.0
-            self.position_label.setText(f"Position: {pos_um:.3f} µm")
+            pos_mm = pos_um / 1000.0
+            # Show both µm and mm for large positions
+            self.position_label.setText(f"Position: {pos_um:.3f} µm ({pos_mm:.3f} mm)")
         except Exception as e:
             self.position_label.setText(f"Position: Error - {e}")
-    
-    def _goto_position(self, pos_um: float = None):
-        """Move to position."""
-        if pos_um is None:
-            pos_um = self.goto_spin.value()
         
+        # Update exposure time display
+        try:
+            if self.filter.camera and hasattr(self.filter.camera, 'get_exposure_time'):
+                exp_s = self.filter.camera.get_exposure_time()
+                exp_ms = exp_s * 1000
+                self.exposure_label.setText(f"Camera Exposure: {exp_ms:.2f} ms")
+            else:
+                self.exposure_label.setText("Camera Exposure: N/A")
+        except Exception as e:
+            self.exposure_label.setText(f"Camera Exposure: Error")
+    
+    def _goto_position(self, checked=False):
+        """Move to position (button callback).
+        
+        ✅ FIXED: Ignore 'checked' argument from button clicked signal.
+        Always read from the spin box widget.
+        """
+        # Get value from spin box (ignore 'checked' arg from button signal)
+        pos_um = self.goto_spin.value()
         self.filter.move_to_position(pos_um)
     
     def _update_position_count(self):
@@ -216,7 +257,8 @@ class FilterPanelWidget(QWidget):
         
         if step > 0 and end >= start:
             num = int((end - start) / step) + 1
-            self.num_positions_label.setText(f"Positions: {num}")
+            distance_mm = (end - start) / 1000
+            self.num_positions_label.setText(f"Positions: {num} (over {distance_mm:.1f} mm)")
         else:
             self.num_positions_label.setText("Positions: Invalid")
     
