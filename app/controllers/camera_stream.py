@@ -1,10 +1,6 @@
-
-# ============================================================================
-# FILE 1: app/controllers/camera_stream.py - MODIFIED (OPTIMIZED)
-# ============================================================================
-
+# app/controllers/camera_stream.py
 """
-Camera Stream Controller - WITH FOURIER TRANSFORM SUPPORT
+Camera Stream Controller - WITH FOURIER TRANSFORM SUPPORT + DEBUGGING
 
 Manages camera acquisition in a separate thread with color scaling and FFT.
 """
@@ -46,7 +42,7 @@ class ColorScaleManager:
         self.auto_percentile = (1, 99)
         self.colormap = 'gray'
         self.last_stats = {'min': 0, 'max': 4095, 'mean': 0}
-        self.fourier_mode = False  # NEW
+        self.fourier_mode = False
     
     def set_fourier_mode(self, enabled: bool):
         """Enable/disable Fourier transform mode."""
@@ -73,14 +69,10 @@ class ColorScaleManager:
         self.colormap = colormap
     
     def apply_fourier_transform(self, image: np.ndarray) -> np.ndarray:
-        """
-        Apply 2D Fourier transform to image.
-        Returns magnitude spectrum ready for color scaling.
-        """
+        """Apply 2D Fourier transform to image."""
         if not HAS_SCIPY:
-            return image  # Fallback
+            return image
         
-        # Convert to grayscale if needed
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         elif image.dtype == np.uint16:
@@ -88,36 +80,28 @@ class ColorScaleManager:
         else:
             gray = image
         
-        # 2D FFT
         f_transform = fft.fft2(gray)
         f_shifted = fft.fftshift(f_transform)
-        
-        # Magnitude spectrum (log scale)
         magnitude = np.abs(f_shifted)
         magnitude_log = np.log1p(magnitude)
         
-        # Return as float32 for scaling
         return magnitude_log.astype(np.float32)
     
     def apply_scaling(self, image: np.ndarray) -> np.ndarray:
-        """Apply color scaling to image - HANDLES BOTH REAL AND FOURIER."""
+        """Apply color scaling to image."""
         if image is None or image.size == 0:
             return np.zeros((100, 100, 3), dtype=np.uint8)
         
-        # Step 1: Apply Fourier transform if enabled
         if self.fourier_mode and HAS_SCIPY:
             image = self.apply_fourier_transform(image)
         
-        # Step 2: Normalize to uint16 range if needed
         if image.dtype == np.float32 or image.dtype == np.float64:
-            # Already processed (Fourier), scale to 0-65535
             img_min, img_max = image.min(), image.max()
             if img_max > img_min:
                 image = ((image - img_min) / (img_max - img_min) * 65535).astype(np.uint16)
             else:
                 image = np.zeros_like(image, dtype=np.uint16)
         
-        # Step 3: Calculate scaling range
         if self.mode == 'auto':
             try:
                 vmin = np.percentile(image, self.auto_percentile[0])
@@ -127,7 +111,6 @@ class ColorScaleManager:
         else:
             vmin, vmax = self.min_val, self.max_val
         
-        # Update stats
         self.last_stats = {
             'min': float(np.min(image)),
             'max': float(np.max(image)),
@@ -136,7 +119,6 @@ class ColorScaleManager:
             'scale_max': float(vmax)
         }
         
-        # Step 4: Scale to 0-255
         if vmax > vmin:
             scaled = np.clip((image - vmin) / (vmax - vmin), 0.0, 1.0)
         else:
@@ -144,11 +126,9 @@ class ColorScaleManager:
         
         img_8bit = (scaled * 255).astype(np.uint8)
         
-        # Step 5: Check for inversion
         if hasattr(self, 'invert_enabled') and self.invert_enabled:
             img_8bit = 255 - img_8bit
         
-        # Step 6: Apply colormap
         cmap = self.COLORMAPS.get(self.colormap)
         if cmap is not None:
             img_colored = cv2.applyColorMap(img_8bit, cmap)
@@ -163,9 +143,7 @@ class ColorScaleManager:
 
 
 class CameraStreamThread(QThread):
-    """
-    Camera streaming thread with Fourier transform support.
-    """
+    """Camera streaming thread with diagnostics."""
     
     frame_ready = pyqtSignal(object)
     frame_dropped = pyqtSignal()
@@ -185,6 +163,7 @@ class CameraStreamThread(QThread):
         
         self.frame_count = 0
         self.dropped_frames = 0
+        self.none_count = 0  # ✅ NEW: Track None returns
         self.last_fps_time = time.time()
         self.actual_fps = 0.0
     
@@ -215,32 +194,72 @@ class CameraStreamThread(QThread):
     
     def run(self):
         """Main thread loop."""
-        interval = 1.0 / self.target_fps
-        last_emit = 0
-        
         print(f"[CameraStream] Started (target {self.target_fps} fps)")
         
+        if hasattr(self.camera, 'is_streaming'):
+            print(f"[CameraStream] Camera streaming status: {self.camera.is_streaming()}")
+        
+        consecutive_nones = 0
+        max_consecutive_nones = 1000
+
         try:
             while not self.stop_flag:
-                loop_start = time.time()
-                
-                # Acquire frame
+                # Get the current exposure to know how long to sleep
                 try:
-                    frame = self.camera.acquire_single_image()
+                    exposure_s = self.camera.get_exposure_time()
+                except Exception:
+                    exposure_s = 1.0 / self.target_fps
+
+                # Target interval — never faster than exposure time
+                target_interval = max(exposure_s * 1.05, 1.0 / self.target_fps)
+
+                # Try to get a frame
+                try:
+                    frame = self.camera.read_next_image()
                 except Exception as e:
                     self.error_occurred.emit(f"Camera acquisition error: {e}")
+                    print(f"[CameraStream] Error reading frame: {e}")
                     time.sleep(0.1)
                     continue
-                
-                # Check if enough time has passed
-                now = time.time()
-                if now - last_emit < interval:
-                    self.dropped_frames += 1
-                    self.frame_dropped.emit()
-                    time.sleep(interval * 0.5)
+
+                if frame is None:
+                    consecutive_nones += 1
+                    self.none_count += 1
+
+                    if consecutive_nones == 10:
+                        print(f"[CameraStream] ⚠️ Getting many None frames (exposure might be long)")
+                    elif consecutive_nones == 50:
+                        print(f"[CameraStream] ⚠️ Still no frames after 50 attempts")
+                        print(f"[CameraStream]    Current exposure: {exposure_s:.3f}s")
+                    elif consecutive_nones >= max_consecutive_nones:
+                        # Don't kill the thread -- attempt a self-healing acquisition reset.
+                        # Recovers from camera buffer getting stuck (e.g. after a sweep).
+                        print(f"[CameraStream] ⚠️ No frames after {max_consecutive_nones} attempts -- resetting acquisition")
+                        try:
+                            if hasattr(self.camera, 'stop_streaming'):
+                                self.camera.stop_streaming()
+                            time.sleep(0.2)
+                            if hasattr(self.camera, 'start_streaming'):
+                                self.camera.start_streaming()
+                            print("[CameraStream] ✅ Acquisition reset -- resuming")
+                        except Exception as reset_err:
+                            print(f"[CameraStream] ❌ Reset failed: {reset_err}")
+                        consecutive_nones = 0
+                        time.sleep(0.5)
+                        continue
+
+                    # Sleep close to one full exposure before polling again —
+                    # the camera delivers at most 1 frame per exposure period.
+                    # Clamp between 5ms (very short exposures) and 500ms (very long).
+                    time.sleep(max(0.005, min(exposure_s * 0.9, 0.5)))
                     continue
-                
-                # Process frame (FFT happens here in worker thread!)
+
+                # Got a frame
+                if consecutive_nones > 0:
+                    print(f"[CameraStream] ✅ Got frame after {consecutive_nones} None returns")
+                consecutive_nones = 0
+
+                # Process and emit
                 with QMutexLocker(self.mutex):
                     try:
                         processed = self.color_manager.apply_scaling(frame)
@@ -248,30 +267,32 @@ class CameraStreamThread(QThread):
                     except Exception as e:
                         self.error_occurred.emit(f"Frame processing error: {e}")
                         continue
-                
-                # Emit processed frame
+
                 self.frame_ready.emit(processed)
                 self.stats_updated.emit(stats)
-                last_emit = now
                 self.frame_count += 1
-                
-                # Update FPS
-                if now - self.last_fps_time >= 1.0:
+
+                # Report FPS every 5 seconds
+                now = time.time()
+                if now - self.last_fps_time >= 5.0:
                     self.actual_fps = self.frame_count / (now - self.last_fps_time)
+                    print(f"[CameraStream] FPS: {self.actual_fps:.1f}, None returns: {self.none_count}")
                     self.frame_count = 0
-                    self.dropped_frames = 0
+                    self.none_count = 0
                     self.last_fps_time = now
-                
-                # Avoid busy loop
-                elapsed = time.time() - loop_start
-                if elapsed < interval:
-                    time.sleep((interval - elapsed) * 0.5)
-        
+
+                # Sleep for one full exposure interval before polling again —
+                # the camera won't have a new frame until then anyway
+                time.sleep(target_interval)
+
         except Exception as e:
             self.error_occurred.emit(f"Camera stream fatal error: {e}")
-        
+            print(f"[CameraStream] Fatal error: {e}")
+            import traceback
+            traceback.print_exc()
+
         finally:
-            print(f"[CameraStream] Stopped")
+            print(f"[CameraStream] Stopped (total frames: {self.frame_count})")
     
     def stop(self):
         """Stop the camera stream."""

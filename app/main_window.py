@@ -139,7 +139,8 @@ class MainWindow(QMainWindow):
             state=self.state,
             signals=self.signals,
             filter_stage=filter_stage,
-            camera=self.camera
+            camera=self.camera,
+            stage=self.stage
         )
         
         # Central widget
@@ -259,7 +260,8 @@ class MainWindow(QMainWindow):
             state=self.state,
             signals=self.signals,
             filter_stage=filter_stage,
-            camera=self.camera
+            camera=self.camera,
+            stage=self.stage
         )
         
         # Central widget
@@ -614,20 +616,29 @@ class MainWindow(QMainWindow):
         if hasattr(self.camera, 'acquisition_running') and self.camera.acquisition_running:
             print("[MainWindow] ⚠️  Camera already acquiring - stopping first")
             try:
-                self.camera.stop_acquisition()
+                # ✅ Use stop_streaming() instead of stop_acquisition()
+                self.camera.stop_streaming()
             except Exception as e:
-                print(f"[MainWindow] Warning: Failed to stop acquisition: {e}")
+                print(f"[MainWindow] Warning: Failed to stop streaming: {e}")
         
+        # ✅ CRITICAL: Start camera streaming BEFORE starting the thread
+        try:
+            self.camera.start_streaming()
+            print("[MainWindow] Camera streaming enabled")
+        except Exception as e:
+            print(f"[MainWindow] Failed to start camera streaming: {e}")
+            return
+
         self.camera_thread = CameraStreamThread(camera=self.camera, target_fps=20)
-        
+
         self.camera_thread.frame_ready.connect(self.camera_view.update_frame)
         self.camera_thread.stats_updated.connect(self.camera_view.update_stats)
         self.camera_thread.error_occurred.connect(
             lambda msg: self._handle_camera_error(msg)  # ✅ NEW: Better error handling
         )
-        
+
         self.camera_view.set_camera_thread(self.camera_thread)
-        
+
         self.camera_thread.start()
         print("[MainWindow] Camera stream started")
     

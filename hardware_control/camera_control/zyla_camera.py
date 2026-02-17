@@ -1,6 +1,10 @@
 # hardware_control/camera_control/zyla_camera.py
 """
-✅ ROBUST: Safe parameter changes during acquisition
+Andor Zyla camera implementation.
+
+Streaming mode is for continuous live view (camera_stream.py).
+Snap mode (acquire_single_image) is for single captures during sweeps.
+Never restart streaming inside a sweep loop — stop once before, start once after.
 """
 
 import numpy as np
@@ -19,6 +23,7 @@ class ZylaCamera(AndorCameraBase):
     - Safe ROI changes (stop acquisition if needed)
     - Proper state tracking
     - Defensive error handling
+    - ✅ NEW: Frame availability waiting after parameter changes
     """
 
     def __init__(self):
@@ -27,7 +32,8 @@ class ZylaCamera(AndorCameraBase):
         self._streaming = False
         self._current_roi = None
         self.acquisition_running = False
-        self._changing_params = False  # ✅ NEW: Flag for parameter changes
+        self._changing_params = False  # Flag for parameter changes
+        self._cached_exposure = 0.01  # Cache for performance
 
     # ═══════════════════════════════════════════════════════════════════════
     # Connection Management
@@ -122,54 +128,76 @@ class ZylaCamera(AndorCameraBase):
         return (w, h)
 
     # ═══════════════════════════════════════════════════════════════════════
-    # ✅ SAFE PARAMETER CHANGES
+    # ✅ SAFE PARAMETER CHANGES WITH FRAME WAITING
     # ═══════════════════════════════════════════════════════════════════════
 
-    def set_exposure_time(self, seconds: float) -> None:
+    def set_exposure_time(self, seconds: float, restart_streaming: bool = False) -> None:
         """
-        ✅ SAFE: Set exposure time with acquisition management.
-        
-        Automatically stops/restarts acquisition if needed.
+        Set exposure time on the camera hardware.
+
+        Args:
+            seconds: Exposure time in seconds.
+            restart_streaming: If True AND currently streaming, stop and restart
+                               streaming so the live view picks up the new exposure.
+                               Pass True only from the live-view UI.
+                               Leave False (default) for sweeps.
         """
         if self._cam is None:
             raise RuntimeError("Camera not connected.")
         if seconds <= 0:
             raise ValueError("Exposure time must be positive.")
-        
-        # ✅ Check if we need to stop acquisition
-        was_acquiring = self.acquisition_running
-        
-        if was_acquiring:
-            print(f"[ZylaCamera] Stopping acquisition to change exposure...")
-            try:
-                self._cam.stop_acquisition()
-                self.acquisition_running = False
-                time.sleep(0.05)  # Brief settle time
-            except Exception as e:
-                print(f"[ZylaCamera] Warning during acquisition stop: {e}")
-        
-        # Set exposure
+
+        was_streaming = self._streaming
+        prev_exposure = self._cached_exposure  # Exposure that was running before this call
+
+        if was_streaming:
+            print(f"[ZylaCamera] Stopping stream to change exposure to {seconds}s...")
+            self.stop_streaming()
+            # Wait for the hardware to finish the last frame of the previous exposure.
+            # The SDK does NOT recompute FrameRate correctly on restart unless the
+            # previous acquisition has fully completed.  50ms is fine for short exposures
+            # but insufficient after e.g. 1.5s — the SDK returns the stale FrameRate.
+            # We wait one full previous-frame-period (capped at 2s so UI is responsive).
+            # Floor at 50ms: Zyla readout pipeline needs at least this long
+            # to flush even after very short exposures, otherwise FrameRate
+            # is latched stale when AcquisitionStart is called next.
+            settle = min(max(prev_exposure * 1.1, 0.05), 2.0)
+            print(f"[ZylaCamera] Waiting {settle:.2f}s for hardware to settle...")
+            time.sleep(settle)
+
+        # Set ExposureTime while acquisition is fully stopped and settled.
+        # FrameRate is intentionally NOT touched here — the SDK recomputes it
+        # from ExposureTime + ReadoutTime when acquisition restarts.
         try:
-            self._cam.set_attribute_value("ExposureTime", seconds)
-            print(f"[ZylaCamera] ✅ Exposure set to {seconds:.4f}s")
+            self._cam.set_exposure(seconds)
+            self._cached_exposure = seconds
         except Exception as e:
             print(f"[ZylaCamera] ❌ Failed to set exposure: {e}")
             raise
-        
-        # ✅ Restart acquisition if it was running
-        if was_acquiring:
-            print(f"[ZylaCamera] Restarting acquisition...")
+
+        if was_streaming and restart_streaming:
+            print(f"[ZylaCamera] Restarting streaming after exposure change...")
             try:
-                self._cam.start_acquisition()
-                self.acquisition_running = True
+                self.start_streaming()
+                # The Zyla SDK recomputes FrameRate lazily after AcquisitionStart.
+                # Reading it immediately returns the previous stale value.
+                # A short sleep lets the attribute cache refresh before we log it.
+                time.sleep(0.05)
+                try:
+                    actual_fps = self._cam.get_attribute_value("FrameRate")
+                    print(f"[ZylaCamera] ✅ Exposure: {seconds}s | FrameRate: {actual_fps:.2f} fps")
+                except Exception:
+                    print(f"[ZylaCamera] ✅ Exposure: {seconds}s")
             except Exception as e:
-                print(f"[ZylaCamera] ❌ Failed to restart acquisition: {e}")
-                # Don't raise - leave acquisition stopped
+                print(f"[ZylaCamera] ❌ Failed to restart streaming: {e}")
+        else:
+            print(f"[ZylaCamera] ✅ Exposure set: {seconds}s")
 
     def get_exposure_time(self) -> float:
         if self._cam is None:
             raise RuntimeError("Camera not connected.")
-        return float(self._cam.get_attribute_value("ExposureTime"))
+        # Return cached value to avoid hardware polling lag
+        return self._cached_exposure
 
     def set_bit_depth_mode(self, mode: str) -> None:
         if self._cam is None:
@@ -227,9 +255,9 @@ class ZylaCamera(AndorCameraBase):
             print(f"[ZylaCamera] ❌ Failed to set ROI: {e}")
             raise
         
-        # ✅ Restart acquisition if it was running
+        # Restart acquisition if it was running
         if was_acquiring:
-            print(f"[ZylaCamera] Restarting acquisition...")
+            print(f"[ZylaCamera] Restarting acquisition after ROI change...")
             try:
                 self._cam.start_acquisition()
                 self.acquisition_running = True
@@ -287,23 +315,24 @@ class ZylaCamera(AndorCameraBase):
         try:
             self._cam.stop_acquisition()
             self.acquisition_running = False
-            
-            # Optional: Clear buffers
-            # self._cam.clear_acquisition()
-            
+
+            # Clear buffers if available
+            if hasattr(self._cam, 'clear_acquisition'):
+                try:
+                    self._cam.clear_acquisition()
+                    print("[ZylaCamera] ✅ Acquisition buffer cleared")
+                except Exception as e:
+                    print(f"[ZylaCamera] Warning during buffer clear: {e}")
+
         except Exception as e:
             print(f"[ZylaCamera] Warning during stream stop: {e}")
-        
+
         finally:
             self._streaming = False
             print("[ZylaCamera] ✅ Streaming stopped")
 
     def read_next_image(self) -> Optional[np.ndarray]:
-        """
-        ✅ ROBUST: Read next frame with error handling.
-        
-        Returns None if no frame available or error occurs.
-        """
+        """Read the most recent frame from the camera buffer."""
         if self._cam is None or not self._streaming:
             return None
         
@@ -363,6 +392,16 @@ if __name__ == "__main__":
             w, h = cam.get_sensor_size()
             print(f"✅ Sensor size: {w} x {h} pixels")
 
+            # Test if clear_acquisition exists and works
+            if hasattr(cam._cam, 'clear_acquisition'):
+                try:
+                    cam._cam.clear_acquisition()
+                    print("✅ clear_acquisition() called successfully on camera object")
+                except Exception as e:
+                    print(f"❌ clear_acquisition() failed: {e}")
+            else:
+                print("⚠️  clear_acquisition() not available on camera object")
+
             try:
                 cam.set_bit_depth_mode("High dynamic range (16-bit)")
                 print("✅ Set to HDR mode")
@@ -378,15 +417,22 @@ if __name__ == "__main__":
             cam.start_streaming()
             time.sleep(0.2)
             
-            print("Changing exposure while streaming...")
-            cam.set_exposure_time(0.01)  # Should handle gracefully
+            print("Changing exposure while streaming (live view)...")
+            cam.set_exposure_time(0.05, restart_streaming=True)
             time.sleep(0.2)
+            
+            print("Changing exposure without streaming restart (sweep mode)...")
+            cam.stop_streaming()
+            cam.set_exposure_time(0.1)  # No restart — snap mode
+            frame = cam.acquire_single_image()
+            if frame is not None:
+                print(f"✅ Snap frame: shape={frame.shape}, dtype={frame.dtype}")
+            else:
+                print("❌ Failed to get snap frame")
             
             print("Changing ROI while streaming...")
-            cam.set_roi(512, 512, 1024, 1024)  # Should handle gracefully
-            time.sleep(0.2)
-            
-            cam.stop_streaming()
+            cam.start_streaming()
+            cam.set_roi(512, 512, 1024, 1024)
             
             print("✅ Safe parameter change test passed")
             print("🧪 ZylaCamera test completed successfully.")

@@ -3,8 +3,10 @@
 ✅ FIXED: Hardware Manager with proper cleanup and error recovery
 """
 
+
 from typing import Tuple, Optional
 from pathlib import Path
+import time
 
 
 class HardwareManager:
@@ -202,10 +204,21 @@ class HardwareManager:
     
     def shutdown(self):
         """
-        ✅ FIXED: Shutdown with defensive error handling.
+        ✅ FIXED: Shutdown with filter stage homing.
         """
         print("[HardwareManager] Shutting down hardware...")
-        
+
+        # ✅ FIX #1: Home filter stage to 0 before shutdown
+        if self.filter_stage is not None:
+            try:
+                print("[HardwareManager]   Homing filter stage to 0...")
+                self.filter_stage.move_abs(0)  # Move to 0 nm (0 µm)
+                time.sleep(0.8)  # Wait for movement to complete
+                actual_pos = self.filter_stage.get_position()
+                print(f"[HardwareManager]   ✅ Filter stage homed (position: {actual_pos} nm)")
+            except Exception as e:
+                print(f"[HardwareManager]   ⚠️ Failed to home filter stage: {e}")
+
         # Camera (FIXED: More defensive)
         if self.camera is not None:
             try:
@@ -216,8 +229,8 @@ class HardwareManager:
             except Exception as e:
                 print(f"[HardwareManager]   ⚠️  Camera disconnect error: {e}")
                 self.camera = None  # Force cleanup
-        
-        # Filter stage
+
+        # Filter stage (close after homing)
         if self.filter_stage is not None:
             try:
                 print("[HardwareManager]   Closing filter stage...")
@@ -227,7 +240,7 @@ class HardwareManager:
             except Exception as e:
                 print(f"[HardwareManager]   ⚠️  Filter stage error: {e}")
                 self.filter_stage = None
-        
+
         # Stage
         if self.stage is not None:
             try:
@@ -240,7 +253,7 @@ class HardwareManager:
                 print(f"[HardwareManager]   ⚠️  Stage error: {e}")
                 self.stage = None
                 self.stage_adapter = None
-        
+
         # MCS manager
         if self.mcs_manager is not None:
             try:
@@ -251,7 +264,7 @@ class HardwareManager:
             except Exception as e:
                 print(f"[HardwareManager]   ⚠️  MCS error: {e}")
                 self.mcs_manager = None
-        
+
         self.mode = "disconnected"
         print("[HardwareManager] ✅ All hardware shutdown complete")
     

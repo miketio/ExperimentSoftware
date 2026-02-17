@@ -172,46 +172,23 @@ class CameraViewWidget(QWidget):
         pass
     
     def _apply_exposure(self):
-        """Apply exposure time to camera."""
+        """Apply exposure time to camera - WITHOUT stopping stream."""
         if self.camera is None:
-            print("[CameraView] No camera available")
             self.signals.status_message.emit("No camera connected")
             return
-        
+
         exposure_ms = self.exposure_spin.value()
         exposure_s = exposure_ms / 1000.0
-        
-        print(f"[CameraView] Setting exposure to {exposure_ms:.2f} ms ({exposure_s:.4f} s)")
-        
+
         try:
-            # Stop camera stream temporarily
-            stream_was_running = False
-            if self.camera_thread and self.camera_thread.isRunning():
-                stream_was_running = True
-                print("[CameraView] Stopping camera stream...")
-                self.signals.request_stop_camera_stream.emit()
-                # Wait briefly for stream to stop
-                import time
-                time.sleep(0.2)
-            
-            # Set exposure
+            # Set exposure and restart streaming so live view picks up the change
             if hasattr(self.camera, 'set_exposure_time'):
-                self.camera.set_exposure_time(exposure_s)
-                print(f"[CameraView] ✅ Exposure set to {exposure_s:.4f} s")
+                self.camera.set_exposure_time(exposure_s, restart_streaming=True)
                 self.signals.status_message.emit(f"Exposure set to {exposure_ms:.2f} ms")
             else:
-                print("[CameraView] Camera does not support set_exposure_time()")
                 self.signals.status_message.emit("Camera does not support exposure control")
-            
-            # Restart camera stream
-            if stream_was_running:
-                print("[CameraView] Restarting camera stream...")
-                import time
-                time.sleep(0.1)
-                self.signals.request_start_camera_stream.emit()
-        
+
         except Exception as e:
-            print(f"[CameraView] Failed to set exposure: {e}")
             import traceback
             traceback.print_exc()
             self.signals.error_occurred.emit(
