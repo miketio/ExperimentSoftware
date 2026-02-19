@@ -103,7 +103,7 @@ class CameraViewWidget(QWidget):
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("Exposure:"))
         self.exposure_spin = QDoubleSpinBox()
-        self.exposure_spin.setRange(0.1, 10000.0)  # 0.1ms to 10s
+        self.exposure_spin.setRange(0.1, 60000.0)  # 0.1ms to 10s
         self.exposure_spin.setValue(20.0)  # Default 20ms
         self.exposure_spin.setDecimals(2)
         self.exposure_spin.setSuffix(" ms")

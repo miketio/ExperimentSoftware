@@ -269,12 +269,19 @@ class ZylaCamera(AndorCameraBase):
     # ═══════════════════════════════════════════════════════════════════════
 
     def acquire_single_image(self) -> np.ndarray:
-        """Acquire single frame (snap mode)."""
+        """Acquire single frame (snap mode) with exposure-aware timeout.
+        
+        snap(timeout) is a per-frame timeout passed to grab() → wait_for_frame().
+        The default is only 5s, which fails for long exposures.
+        We add 10s headroom on top of the current exposure, floored at 30s.
+        """
         if self._cam is None:
             raise RuntimeError("Camera not connected.")
-        
-        # Snap mode doesn't conflict with streaming
-        image = self._cam.snap()
+
+        timeout = max(self._cached_exposure + 10.0, 70.0)
+        print(f"[ZylaCamera] Snap: timeout={timeout:.1f}s (exposure={self._cached_exposure:.3f}s)")
+
+        image = self._cam.snap(timeout=timeout)
         image = np.asarray(image)
         return self._apply_software_gain(image)
 
@@ -313,16 +320,8 @@ class ZylaCamera(AndorCameraBase):
         print("[ZylaCamera] Stopping streaming...")
         
         try:
-            self._cam.stop_acquisition()
+            self._cam.clear_acquisition()
             self.acquisition_running = False
-
-            # Clear buffers if available
-            if hasattr(self._cam, 'clear_acquisition'):
-                try:
-                    self._cam.clear_acquisition()
-                    print("[ZylaCamera] ✅ Acquisition buffer cleared")
-                except Exception as e:
-                    print(f"[ZylaCamera] Warning during buffer clear: {e}")
 
         except Exception as e:
             print(f"[ZylaCamera] Warning during stream stop: {e}")

@@ -153,6 +153,11 @@ class FilterSweepWorker(QThread):
                 actual_um = actual_nm / 1000.0
 
                 try:
+                    # Ensure camera is not left in a streaming state before snap
+                    if hasattr(self.camera, '_streaming') and self.camera._streaming:
+                        print(f"[FilterSweep] ⚠️ Camera still streaming before snap — stopping")
+                        self.camera.stop_streaming()
+                        time.sleep(0.2)
                     image = self.camera.acquire_single_image()
 
                     mean_intensity = float(np.mean(image))
@@ -177,8 +182,10 @@ class FilterSweepWorker(QThread):
                     self.image_captured.emit(idx, actual_um, image)
 
                 except Exception as e:
+                    import traceback
                     failed_count += 1
-                    print(f"[FilterSweep] ⚠️  Failed to capture at {actual_nm}nm: {e}")
+                    print(f"[FilterSweep] ❌ Failed to capture at {actual_nm}nm: {type(e).__name__}: {e}")
+                    traceback.print_exc()
 
                 self.progress.emit(idx + 1, total, f"Captured {idx+1}/{total}")
 
@@ -386,8 +393,10 @@ class MultiPositionSweepWorker(QThread):
                             })
 
                         except Exception as e:
+                            import traceback
                             failed_count += 1
-                            print(f"[MultiPositionSweep] ⚠️  Failed capture: {e}")
+                            print(f"[FilterSweep] ❌ Failed capture at {actual_nm}nm | {type(e).__name__}: {e}")
+                            traceback.print_exc()
 
                     # Intensity stats
                     all_means = [r['mean_intensity'] for r in results]
