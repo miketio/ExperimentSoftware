@@ -131,6 +131,18 @@ class HardwareManager:
             print("[HardwareManager] Connecting to camera...")
             self.camera = ZylaCamera()
             self.camera.connect()
+            
+            # Set 16-bit mode for maximum dynamic range
+            try:
+                self.camera.set_bit_depth_mode("16-bit (low noise & high well capacity)")
+                print("[HardwareManager] ✅ Camera set to 16-bit mode")
+            except (ValueError, RuntimeError):
+                try:
+                    self.camera.set_bit_depth_mode("High dynamic range (16-bit)")
+                    print("[HardwareManager] ✅ Camera set to HDR 16-bit mode")
+                except Exception as e:
+                    print(f"[HardwareManager] ⚠️  Could not set 16-bit mode: {e}")
+            
             print("[HardwareManager] ✅ Camera initialized")
             
         except RuntimeError as e:
