@@ -54,7 +54,7 @@ class MockCamera(AndorCameraBase):
         self.exposure_time = 0.02
         self.bit_depth_mode = "16-bit (low noise & high well capacity)"
         self.roi = None
-        self.is_streaming = False
+        self._streaming = False
         self._software_gain = 1.0
         self._last_frame = None
 
@@ -70,7 +70,7 @@ class MockCamera(AndorCameraBase):
         print("[MockCameraV3] Connected (simulated)")
 
     def disconnect(self):
-        self.is_streaming = False
+        self._streaming = False
         print("[MockCameraV3] Disconnected")
 
     def get_camera_info(self) -> dict:
@@ -129,16 +129,18 @@ class MockCamera(AndorCameraBase):
         return img
 
     def start_streaming(self):
-        self.is_streaming = True
+        self._streaming = True
         print("[MockCameraV3] Streaming started")
 
     def stop_streaming(self):
-        self.is_streaming = False
+        self._streaming = False
         print("[MockCameraV3] Streaming stopped")
 
     def read_next_image(self) -> Optional[np.ndarray]:
-        return self.acquire_single_image() if self.is_streaming else None
-
+        return self.acquire_single_image() if self._streaming else None
+    
+    def is_streaming(self) -> bool:
+        return self._streaming
     # ========================================================
     # Rendering
     # ========================================================
