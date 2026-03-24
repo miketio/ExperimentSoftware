@@ -76,11 +76,9 @@ class ModeSelectionDialog(QDialog):
         self._group.addButton(self._stage_radio, 2)
         layout.addWidget(self._stage_radio)
 
-        # Smart default
-        if av["real_camera"] and av["real_stage"]:
+        # Default: always Full Experiment if any real hardware found, else Mock
+        if av["real_camera"] or av["real_stage"]:
             self._full_radio.setChecked(True)
-        elif av["real_stage"]:
-            self._stage_radio.setChecked(True)
         else:
             self._mock_radio.setChecked(True)
 
@@ -123,8 +121,6 @@ def _launch_stage_only(hw_manager: HardwareManager):
 
     print(f"✅ {msg}")
 
-    from app.system_state import SystemState, HardwareMode
-    from app.signals import SystemSignals
     from app.stage_only_window import StageOnlyWindow
 
     state = SystemState()
@@ -149,7 +145,6 @@ def _launch_stage_only(hw_manager: HardwareManager):
 
 def _launch_full_or_mock(app, hw_manager: HardwareManager, selected_mode: int):
     """Run the original camera+stage launch flow. Returns exit code."""
-    from PyQt6.QtWidgets import QDialog
     from app.main_window import MainWindow
 
     # Hardware init

@@ -66,8 +66,8 @@ class StageJogWidget(QWidget):
         step_row = QHBoxLayout()
         step_row.addWidget(QLabel("Step (µm):"))
         self._step_combo = QComboBox()
-        self._step_combo.addItems(["0.1", "0.5", "1", "5", "10", "20", "50", "100", "500"])
-        self._step_combo.setCurrentText("10")
+        self._step_combo.addItems(["0.1", "0.2", "0.5", "1", "2", "5", "10", "20", "50"])
+        self._step_combo.setCurrentText("1")
         self._step_combo.currentTextChanged.connect(
             lambda v: self.state.set_jog_step(float(v))
         )
