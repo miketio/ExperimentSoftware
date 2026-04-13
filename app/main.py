@@ -134,6 +134,7 @@ def _launch_stage_only(hw_manager: HardwareManager):
         signals=signals,
         stage=hw_manager.get_stage(),
         filter_stage=hw_manager.get_filter_stage(),
+        hcu_stage=hw_manager.get_hcu_stage(),
     )
     window.show()
     return window

@@ -212,6 +212,7 @@ class NavigationController(QObject):
         self.autofocus = autofocus_controller
         
         self.worker = None
+        self._navigation_busy = False
         
         print("[NavigationController] Initialized")
     
@@ -309,12 +310,14 @@ class NavigationController(QObject):
             lambda msg: self.signals.status_message.emit(msg)
         )
         self.worker.complete.connect(self._on_complete)
+        self.worker.finished.connect(self._on_worker_finished)
         self.worker.error.connect(
             lambda e: self._on_error(e)
         )
         
         # Emit started signal
         self.signals.navigation_started.emit(block_id, waveguide, side)
+        self._navigation_busy = True
         self.signals.busy_started.emit(f"Navigation to Block {block_id} WG{waveguide} {side}")
         
         print(f"[NavigationController] Starting worker thread")
@@ -330,6 +333,18 @@ class NavigationController(QObject):
             print("[NavigationController] Cancelling navigation")
             self.worker.cancel()
             self.signals.status_message.emit("Navigation cancelled")
+
+    def shutdown(self):
+        """Stop any running navigation worker during app shutdown."""
+        if self.worker is None:
+            return
+
+        if self.worker.isRunning():
+            print("[NavigationController] Waiting for active navigation to stop...")
+            self.worker.cancel()
+            self.worker.wait()
+
+        self._on_worker_finished()
     
     def _on_complete(self):
         """Handle navigation completion."""
@@ -341,23 +356,27 @@ class NavigationController(QObject):
         
         # Emit completion
         self.signals.navigation_complete.emit()
-        self.signals.busy_ended.emit()
+        if self._navigation_busy:
+            self.signals.busy_ended.emit()
+            self._navigation_busy = False
         self.signals.status_message.emit("✅ Navigation complete")
-        
-        # Cleanup worker
-        if self.worker:
-            self.worker.deleteLater()
-            self.worker = None
     
     def _on_error(self, error: str):
         """Handle navigation error."""
         print(f"[NavigationController] Error: {error}")
         
         self.signals.navigation_failed.emit(error)
-        self.signals.busy_ended.emit()
+        if self._navigation_busy:
+            self.signals.busy_ended.emit()
+            self._navigation_busy = False
         self.signals.error_occurred.emit("Navigation Failed", error)
-        
-        # Cleanup worker
+
+    def _on_worker_finished(self):
+        """Always cleanup worker, including silent-cancel path."""
+        if self._navigation_busy:
+            self.signals.busy_ended.emit()
+            self._navigation_busy = False
+
         if self.worker:
             self.worker.deleteLater()
             self.worker = None
@@ -404,12 +423,14 @@ class NavigationController(QObject):
             lambda msg: self.signals.status_message.emit(msg)
         )
         self.worker.complete.connect(self._on_complete)
+        self.worker.finished.connect(self._on_worker_finished)
         self.worker.error.connect(
             lambda e: self._on_error(e)
         )
         
         # Emit started signal
         self.signals.navigation_started.emit(block_id, waveguide, side)
+        self._navigation_busy = True
         self.signals.busy_started.emit(f"Navigation to Block {block_id} WG{waveguide} {side}")
         
         print(f"[NavigationController] Starting worker thread")

@@ -275,15 +275,17 @@ class HCUStagePanelWidget(QWidget):
         custom_layout.addLayout(save_row)
 
         self._custom_table = QTableWidget()
-        self._custom_table.setColumnCount(3)
-        self._custom_table.setHorizontalHeaderLabels(['Name', 'Position (X, Y, Z) mm', 'Go'])
+        self._custom_table.setColumnCount(4)
+        self._custom_table.setHorizontalHeaderLabels(['Name', 'Position (X, Y, Z) mm', 'Go', 'Delete'])
         self._custom_table.setMaximumHeight(180)
         self._custom_table.setAlternatingRowColors(True)
         hdr = self._custom_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self._custom_table.setColumnWidth(2, 60)
+        self._custom_table.setColumnWidth(3, 75)
         custom_layout.addWidget(self._custom_table)
 
         custom_group.setLayout(custom_layout)
@@ -401,6 +403,25 @@ class HCUStagePanelWidget(QWidget):
             btn_go.setEnabled(self.hcu.is_connected)
             btn_go.clicked.connect(lambda _, n=name: self.hcu._move_to_preset(n))
             self._custom_table.setCellWidget(row, 2, btn_go)
+
+            btn_del = QPushButton("🗑")
+            btn_del.setEnabled(self.hcu.is_connected)
+            btn_del.clicked.connect(lambda _, n=name: self._delete_custom(n))
+            self._custom_table.setCellWidget(row, 3, btn_del)
+
+    def _delete_custom(self, name: str):
+        reply = QMessageBox.question(
+            self,
+            "Delete Custom Position",
+            f"Delete custom position '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.hcu.delete_custom_preset(name)
+        self.signals.status_message.emit(f"Deleted custom position '{name}'")
+        self._refresh_custom_table()
 
     # ------------------------------------------------------------------
     # Position refresh

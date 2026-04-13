@@ -554,12 +554,20 @@ class StageOnlyWindow(QMainWindow):
     No camera, no alignment — just move stages and bookmark positions.
     """
 
-    def __init__(self, state, signals, stage, filter_stage, parent=None):
+    def __init__(self, state, signals, stage, filter_stage, hcu_stage=None, parent=None):
         super().__init__(parent)
         self.state = state
         self.signals = signals
         self.stage = stage
         self.filter_stage = filter_stage
+        self.hcu_stage = hcu_stage
+
+        from app.controllers.hcu_controller import HCUController
+        self.hcu_controller = HCUController(
+            state=self.state,
+            signals=self.signals,
+            hcu_stage=self.hcu_stage,
+        )
 
         self._build_ui()
         self._connect_signals()
@@ -595,7 +603,7 @@ class StageOnlyWindow(QMainWindow):
         self._status_bar.addPermanentWidget(mode_label)
 
     def _make_splitter(self):
-        from PyQt6.QtWidgets import QSplitter
+        from PyQt6.QtWidgets import QSplitter, QScrollArea
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left pane — jog + filter
@@ -606,6 +614,14 @@ class StageOnlyWindow(QMainWindow):
 
         self._filter_widget = FilterManualWidget(self.filter_stage, self.signals)
         left_tabs.addTab(self._filter_widget, "Filter Stage")
+
+        from app.widgets.hcu_stage_panel import HCUStagePanelWidget
+        self._hcu_widget = HCUStagePanelWidget(self.state, self.signals, self.hcu_controller)
+
+        hcu_scroll = QScrollArea()
+        hcu_scroll.setWidgetResizable(True)
+        hcu_scroll.setWidget(self._hcu_widget)
+        left_tabs.addTab(hcu_scroll, "Stage 2")
 
         splitter.addWidget(left_tabs)
 
@@ -667,6 +683,8 @@ class StageOnlyWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
+            if hasattr(self, 'hcu_controller') and self.hcu_controller is not None:
+                self.hcu_controller.shutdown()
             self._pos_timer.stop()
             event.accept()
         else:

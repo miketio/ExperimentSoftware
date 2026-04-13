@@ -98,6 +98,7 @@ class HCUController(QObject):
         self.hcu_stage = hcu_stage
 
         self.worker: Optional[HCUMoveWorker] = None
+        self._move_busy = False
 
         self._data = self._load()
         print(f"[HCUController] Initialized  |  HCU stage: "
@@ -250,9 +251,11 @@ class HCUController(QObject):
         self.worker = HCUMoveWorker(self.hcu_stage, pos_nm)
         self.worker.complete.connect(self._on_complete)
         self.worker.error.connect(self._on_error)
+        self.worker.finished.connect(self._on_worker_finished)
         self.worker.progress.connect(
             lambda msg: self.signals.status_message.emit(msg)
         )
+        self._move_busy = True
         self.worker.start()
         self.signals.busy_started.emit("HCU Stage Move")
         return True
@@ -262,20 +265,40 @@ class HCUController(QObject):
             self.worker.cancel()
             self.signals.status_message.emit("HCU move cancelled")
 
+    def shutdown(self):
+        """Stop any running worker so app shutdown cannot destroy an active QThread."""
+        if self.worker is None:
+            return
+
+        if self.worker.isRunning():
+            print("[HCUController] Waiting for active HCU move to stop...")
+            self.worker.cancel()
+            self.worker.wait()
+
+        self._on_worker_finished()
+
     # ------------------------------------------------------------------
     # Internal signal handlers
     # ------------------------------------------------------------------
 
     def _on_complete(self):
-        self.signals.busy_ended.emit()
+        if self._move_busy:
+            self.signals.busy_ended.emit()
+            self._move_busy = False
         self.signals.status_message.emit("✅ HCU move complete")
-        if self.worker:
-            self.worker.deleteLater()
-            self.worker = None
 
     def _on_error(self, error: str):
-        self.signals.busy_ended.emit()
+        if self._move_busy:
+            self.signals.busy_ended.emit()
+            self._move_busy = False
         self.signals.error_occurred.emit("HCU Move Failed", error)
+
+    def _on_worker_finished(self):
+        """Always cleanup worker, including silent-cancel path."""
+        if self._move_busy:
+            self.signals.busy_ended.emit()
+            self._move_busy = False
+
         if self.worker:
             self.worker.deleteLater()
             self.worker = None

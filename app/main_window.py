@@ -9,7 +9,8 @@ Tabs:  Stage | Auto Align | Manual Cal | Setup | K-Filter | Stage 2 | Bookmarks
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTabWidget, QMenuBar, QStatusBar, QMessageBox, QFileDialog, QDialog
+    QTabWidget, QMenuBar, QStatusBar, QMessageBox, QFileDialog, QDialog,
+    QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup
@@ -143,6 +144,15 @@ class MainWindow(QMainWindow):
     # Shared tab builder
     # ------------------------------------------------------------------
 
+    def _wrap_in_scroll_area(self, widget: QWidget) -> QScrollArea:
+        """Wrap large panels so content remains accessible in compact layouts."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(widget)
+        return scroll
+
     def _build_control_tabs(self) -> QTabWidget:
         """Create the right-side control tab widget (used by both layouts)."""
         tabs = QTabWidget()
@@ -181,14 +191,14 @@ class MainWindow(QMainWindow):
             self.filter_controller,
             hcu_controller=self.hcu_controller   # ← wired here
         )
-        tabs.addTab(self.filter_panel, "K-Filter")
+        tabs.addTab(self._wrap_in_scroll_area(self.filter_panel), "K-Filter")
 
         # Stage 2  — HCU slit stage control
         from app.widgets.hcu_stage_panel import HCUStagePanelWidget
         self.hcu_panel = HCUStagePanelWidget(
             self.state, self.signals, self.hcu_controller
         )
-        tabs.addTab(self.hcu_panel, "Stage 2")
+        tabs.addTab(self._wrap_in_scroll_area(self.hcu_panel), "Stage 2")
 
         # Bookmarks
         from app.widgets.saved_positions_panel import SavedPositionsPanel
@@ -270,18 +280,22 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(left_widget)
 
         # ── Right: Control tabs + Block grid ──────────────────────────
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(5)
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        right_splitter.setChildrenCollapsible(False)
 
-        right_layout.addWidget(self._build_control_tabs(), stretch=2)
+        right_tabs = self._build_control_tabs()
+        right_tabs.setMinimumHeight(420)
+        right_splitter.addWidget(right_tabs)
 
         self.block_grid = BlockGridWidget(
             self.state, self.signals, self.runtime_layout
         )
-        right_layout.addWidget(self.block_grid, stretch=1)
-        main_splitter.addWidget(right_widget)
+        self.block_grid.setMinimumHeight(220)
+        right_splitter.addWidget(self.block_grid)
+
+        right_splitter.setStretchFactor(0, 3)
+        right_splitter.setStretchFactor(1, 1)
+        main_splitter.addWidget(right_splitter)
 
         main_splitter.setStretchFactor(0, 3)
         main_splitter.setStretchFactor(1, 2)
@@ -698,6 +712,13 @@ class MainWindow(QMainWindow):
 
     def cleanup(self):
         print("[MainWindow] Cleaning up …")
+
+        if hasattr(self, 'hcu_controller') and self.hcu_controller is not None:
+            self.hcu_controller.shutdown()
+
+        if hasattr(self, 'navigation_controller') and self.navigation_controller is not None:
+            self.navigation_controller.shutdown()
+
         if self.camera_thread is not None:
             self.camera_thread.stop()
             self.camera_thread = None
