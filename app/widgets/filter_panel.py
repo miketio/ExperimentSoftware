@@ -440,7 +440,7 @@ class FilterPanelWidget(QWidget):
         if self.hcu is not None and self.hcu.is_connected:
             pos = self.hcu.get_current_um()
             self._hcu_pos_label.setText(
-                f"HCU: X={pos['x']:.1f}  Y={pos['y']:.1f}  Z={pos['z']:.1f} µm"
+                f"HCU: X={pos['x']:.1f}  Y={pos['y']:.1f}  Z={pos['z']:.1f} mm"
             )
         elif self.hcu is not None:
             self._hcu_pos_label.setText("HCU: not connected")

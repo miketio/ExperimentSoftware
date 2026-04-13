@@ -2,14 +2,12 @@
 """
 HCU Stage Panel  ("Stage 2" tab)
 
-Controls for the 3-axis HCU stage that positions the k-space slit.
-Features:
-  - Live position readout  (X / Y / Z, µm)
-  - Jog controls with safety threshold
-  - Open-position preset  (stage away → full image)
-  - Slit-position preset  (stage in  → filtered image)
-  - Named custom positions
-  - All presets saved/loaded from config/hcu_positions.json automatically
+FIXES:
+- Units changed to mm throughout (HCU DLL unit chain gives mm, not µm)
+- _jog: uses correct unit conversion (step_mm * 1000 → internal units)
+- _go_to: spinboxes in mm, converts to internal units before calling move_to_nm
+- move_to_nm called with correct keyword args (x_nm=, y_nm=, z_nm=)
+- Safety threshold raised to 20 mm (HCU is slit stage, not sample stage)
 """
 
 from PyQt6.QtWidgets import (
@@ -21,34 +19,43 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 
-# Step sizes (µm) above which the jog is blocked
-LARGE_STEP_THRESHOLD_UM = 10.0
+# HCU is a slit stage — much larger safe travel range than the XYZ sample stage
+LARGE_STEP_THRESHOLD_MM = 20.0   # mm
 
 
 class HCUStagePanelWidget(QWidget):
     """
     Full control panel for the HCU 3-axis slit stage.
 
-    Parameters
-    ----------
-    state          : SystemState
-    signals        : SystemSignals
-    hcu_controller : HCUController  (may wrap a None stage — buttons disabled gracefully)
+    All displayed values and spinboxes are in MILLIMETRES.
+    Internally, get_pos() returns units where value/1000 == mm,
+    and move_to_nm() expects those same internal units.
     """
 
     def __init__(self, state, signals, hcu_controller, parent=None):
         super().__init__(parent)
-        self.state      = state
-        self.signals    = signals
-        self.hcu        = hcu_controller
+        self.state  = state
+        self.signals = signals
+        self.hcu    = hcu_controller
 
         self._init_ui()
         self._connect_signals()
 
-        # Live position timer
         self._timer = QTimer()
         self._timer.timeout.connect(self._refresh_position)
-        self._timer.start(300)          # 300 ms polling
+        self._timer.start(300)
+
+    # ------------------------------------------------------------------
+    # Helpers: unit conversion
+    # ------------------------------------------------------------------
+
+    def _get_pos_mm(self) -> dict:
+        """Return {axis: float_mm} for all axes using get_current_um() which actually gives mm."""
+        return self.hcu.get_current_um()   # named "um" but returns mm — see controller note
+
+    def _mm_to_internal(self, mm: float) -> int:
+        """Convert mm to internal units expected by move_to_nm / get_pos."""
+        return int(mm * 1000)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -73,7 +80,7 @@ class HCUStagePanelWidget(QWidget):
             layout.addWidget(warn)
 
         # ── Live position ──────────────────────────────────────────────
-        pos_group = QGroupBox("Current Position (µm)")
+        pos_group = QGroupBox("Current Position (mm)")
         pos_grid  = QGridLayout()
         self._pos_labels: dict = {}
 
@@ -88,6 +95,10 @@ class HCUStagePanelWidget(QWidget):
             self._pos_labels[axis.lower()] = lbl
             pos_grid.addWidget(lbl, i, 1)
 
+            unit_lbl = QLabel("mm")
+            unit_lbl.setStyleSheet("QLabel { color: #AAA; }")
+            pos_grid.addWidget(unit_lbl, i, 2)
+
         pos_group.setLayout(pos_grid)
         layout.addWidget(pos_group)
 
@@ -96,15 +107,14 @@ class HCUStagePanelWidget(QWidget):
         jog_layout = QVBoxLayout()
 
         step_row = QHBoxLayout()
-        step_row.addWidget(QLabel("Step (µm):"))
+        step_row.addWidget(QLabel("Step (mm):"))
         self._step_combo = QComboBox()
-        self._step_combo.addItems(["0.1", "0.5", "1", "2", "5", "10"])
-        self._step_combo.setCurrentText("1")
+        self._step_combo.addItems(["0.01", "0.05", "0.1", "0.5", "1", "2", "5"])
+        self._step_combo.setCurrentText("0.1")
         step_row.addWidget(self._step_combo)
         step_row.addStretch()
         jog_layout.addLayout(step_row)
 
-        # Arrow grid  (X left/right  |  Z up/down  |  Y focus)
         g = QGridLayout()
         g.setSpacing(6)
 
@@ -152,16 +162,16 @@ class HCUStagePanelWidget(QWidget):
         layout.addWidget(jog_group)
 
         # ── Go To ─────────────────────────────────────────────────────
-        goto_group = QGroupBox("Go To Position")
+        goto_group = QGroupBox("Go To Position (mm)")
         goto_grid  = QGridLayout()
         self._goto_spins: dict = {}
 
         for i, axis in enumerate(('X', 'Y', 'Z')):
             goto_grid.addWidget(QLabel(f"{axis}:"), i, 0)
             sp = QDoubleSpinBox()
-            sp.setRange(-15_000, 15_000)
+            sp.setRange(-25.0, 25.0)   # ±25 mm
             sp.setDecimals(3)
-            sp.setSuffix(" µm")
+            sp.setSuffix(" mm")
             sp.setEnabled(connected)
             self._goto_spins[axis.lower()] = sp
             goto_grid.addWidget(sp, i, 1)
@@ -250,7 +260,6 @@ class HCUStagePanelWidget(QWidget):
         custom_group  = QGroupBox("Custom Saved Positions")
         custom_layout = QVBoxLayout()
 
-        # Save row
         save_row = QHBoxLayout()
         save_row.addWidget(QLabel("Name:"))
         self._custom_name = QLineEdit()
@@ -265,10 +274,9 @@ class HCUStagePanelWidget(QWidget):
         save_row.addWidget(btn_save_custom)
         custom_layout.addLayout(save_row)
 
-        # Table
         self._custom_table = QTableWidget()
         self._custom_table.setColumnCount(3)
-        self._custom_table.setHorizontalHeaderLabels(['Name', 'Position (X, Y, Z) µm', 'Go'])
+        self._custom_table.setHorizontalHeaderLabels(['Name', 'Position (X, Y, Z) mm', 'Go'])
         self._custom_table.setMaximumHeight(180)
         self._custom_table.setAlternatingRowColors(True)
         hdr = self._custom_table.horizontalHeader()
@@ -283,46 +291,67 @@ class HCUStagePanelWidget(QWidget):
 
         layout.addStretch()
 
-        # Initial preset label update
         self._refresh_preset_labels()
         self._refresh_custom_table()
 
     # ------------------------------------------------------------------
-    # Signal connections
-    # ------------------------------------------------------------------
-
     def _connect_signals(self):
-        pass   # no external signals needed beyond the timer
+        pass
 
     # ------------------------------------------------------------------
     # Jog
     # ------------------------------------------------------------------
 
     def _jog(self, axis: str, sign: int):
-        step_um = float(self._step_combo.currentText()) * sign
-        if abs(step_um) >= LARGE_STEP_THRESHOLD_UM:
+        """
+        Jog by step_mm millimetres on the given axis.
+
+        Unit chain:
+          display (mm)  →  internal units (mm * 1000)  →  move_to_nm  →  DLL
+        """
+        if not self.hcu.is_connected:
+            return
+
+        step_mm = float(self._step_combo.currentText()) * sign
+
+        if abs(step_mm) >= LARGE_STEP_THRESHOLD_MM:
             QMessageBox.information(
                 self,
                 "Step Too Large — Move Blocked",
-                f"Step {abs(step_um):.1f} µm is above the safety limit "
-                f"({LARGE_STEP_THRESHOLD_UM:.0f} µm).\n"
+                f"Step {abs(step_mm):.2f} mm exceeds the safety limit "
+                f"({LARGE_STEP_THRESHOLD_MM:.0f} mm).\n"
                 "Please reduce the step size first."
             )
             return
 
-        pos_nm = {ax: self.hcu.hcu_stage.get_pos(ax) for ax in ('x', 'y', 'z')}
-        pos_nm[axis] = int(pos_nm[axis] + step_um * 1000)
-        self.hcu.move_to_nm(**pos_nm)
+        # Read current position in internal units (same units get_pos returns)
+        try:
+            pos = {ax: self.hcu.hcu_stage.get_pos(ax) for ax in ('x', 'y', 'z')}
+        except Exception as e:
+            self.signals.error_occurred.emit("HCU Jog Error", str(e))
+            return
+
+        # Add step in internal units: 1 mm = 1000 internal units
+        pos[axis] = int(pos[axis] + step_mm * 1000)
+
+        self.hcu.move_to_nm(x_nm=pos['x'], y_nm=pos['y'], z_nm=pos['z'])
 
     # ------------------------------------------------------------------
     # Go To
     # ------------------------------------------------------------------
 
     def _go_to(self):
-        x_nm = int(self._goto_spins['x'].value() * 1000)
-        y_nm = int(self._goto_spins['y'].value() * 1000)
-        z_nm = int(self._goto_spins['z'].value() * 1000)
-        self.hcu.move_to_nm(x_nm, y_nm, z_nm)
+        """Move to position entered in the mm spinboxes."""
+        x_mm = self._goto_spins['x'].value()
+        y_mm = self._goto_spins['y'].value()
+        z_mm = self._goto_spins['z'].value()
+
+        # Convert mm → internal units
+        self.hcu.move_to_nm(
+            x_nm=self._mm_to_internal(x_mm),
+            y_nm=self._mm_to_internal(y_mm),
+            z_nm=self._mm_to_internal(z_mm),
+        )
 
     # ------------------------------------------------------------------
     # Preset management
@@ -342,19 +371,20 @@ class HCUStagePanelWidget(QWidget):
             self._refresh_custom_table()
 
     def _refresh_preset_labels(self):
-        o = self.hcu.open_position_um
-        s = self.hcu.slit_position_um
+        """Show preset positions in mm."""
+        o = self.hcu.open_position_um   # actually mm — see hcu_controller note
+        s = self.hcu.slit_position_um   # actually mm
         self._open_label.setText(
-            f"X={o['x']:.1f}  Y={o['y']:.1f}  Z={o['z']:.1f} µm"
+            f"X={o['x']:.2f}  Y={o['y']:.2f}  Z={o['z']:.2f} mm"
         )
         self._slit_label.setText(
-            f"X={s['x']:.1f}  Y={s['y']:.1f}  Z={s['z']:.1f} µm"
+            f"X={s['x']:.2f}  Y={s['y']:.2f}  Z={s['z']:.2f} mm"
         )
 
     def _refresh_custom_table(self):
         self._custom_table.setRowCount(0)
         for name in self.hcu.list_custom_presets():
-            pos = self.hcu.get_preset_um(name)
+            pos = self.hcu.get_preset_um(name)   # actually mm
             if pos is None:
                 continue
             row = self._custom_table.rowCount()
@@ -362,7 +392,7 @@ class HCUStagePanelWidget(QWidget):
 
             self._custom_table.setItem(row, 0, QTableWidgetItem(name))
 
-            pos_text = f"({pos['x']:.1f}, {pos['y']:.1f}, {pos['z']:.1f})"
+            pos_text = f"({pos['x']:.2f}, {pos['y']:.2f}, {pos['z']:.2f}) mm"
             pos_item = QTableWidgetItem(pos_text)
             pos_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._custom_table.setItem(row, 1, pos_item)
@@ -377,6 +407,7 @@ class HCUStagePanelWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_position(self):
-        pos = self.hcu.get_current_um()
+        """Update live position labels (values are in mm)."""
+        pos_mm = self._get_pos_mm()
         for axis, lbl in self._pos_labels.items():
-            lbl.setText(f"{pos[axis]:.3f}")
+            lbl.setText(f"{pos_mm[axis]:.3f}")
