@@ -3,11 +3,11 @@ Stage-Only Control Window
 
 Lightweight window for controlling XYZ + filter stages without camera.
 Provides:
-  - XYZ stage jog / Go-To
+  - XYZ stage jog / Go-To  (with large-step safety warning)
   - Saved position bookmarks
   - Filter stage manual position control
   - Live position display
-  
+
 No camera, no alignment, no imaging — just stage control.
 """
 
@@ -23,6 +23,9 @@ from PyQt6.QtGui import QFont, QColor
 from pathlib import Path
 import json
 from datetime import datetime
+
+
+LARGE_STEP_THRESHOLD_UM = 10.0   # µm — warn above this value
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +71,7 @@ class StageJogWidget(QWidget):
         self._step_combo = QComboBox()
         self._step_combo.addItems(["0.1", "0.2", "0.5", "1", "2", "5", "10", "20", "50"])
         self._step_combo.setCurrentText("1")
+        self.state.set_jog_step(1.0)          # sync state immediately
         self._step_combo.currentTextChanged.connect(
             lambda v: self.state.set_jog_step(float(v))
         )
@@ -75,36 +79,78 @@ class StageJogWidget(QWidget):
         step_row.addStretch()
         root.addLayout(step_row)
 
-        # ── Arrow grid (X / Z) ────────────────────────────────────────
-        arrows_group = QGroupBox("Jog  (X = left/right  |  Z = up/down  |  Y = focus)")
+        # ── Arrow grid ────────────────────────────────────────────────
+        #
+        #        [↑ Z+]      [↑ Y+]
+        #  [← X-]  [⊙]  [X+ →]
+        #        [↓ Z-]      [↓ Y-]
+        #
+        arrows_group = QGroupBox(
+            "Jog  —  X: left/right  |  Z: up/down  |  Y: focus in/out"
+        )
         arrows_layout = QVBoxLayout()
 
         xz = QWidget()
         xz_grid = QGridLayout()
-        xz_grid.setSpacing(6)
+        xz_grid.setSpacing(8)
 
-        def _jog_btn(label, axis, sign):
+        def _btn(label, w=80, h=45):
             b = QPushButton(label)
-            b.setFixedSize(80, 40)
-            b.clicked.connect(lambda: self._jog(axis, sign))
+            b.setFixedSize(w, h)
             return b
 
-        xz_grid.addWidget(_jog_btn("↑ Z+", "z",  1), 0, 1)
-        xz_grid.addWidget(_jog_btn("← X-", "x", -1), 1, 0)
-        xz_grid.addWidget(QLabel(""),                  1, 1)
-        xz_grid.addWidget(_jog_btn("X+ →", "x",  1), 1, 2)
-        xz_grid.addWidget(_jog_btn("↓ Z-", "z", -1), 2, 1)
+        # Z column (col 1)
+        b_z_up = _btn("↑ Z+")
+        b_z_up.clicked.connect(lambda: self._jog("z", 1))
+        xz_grid.addWidget(b_z_up, 0, 1)
+
+        b_x_left = _btn("← X-")
+        b_x_left.clicked.connect(lambda: self._jog("x", -1))
+        xz_grid.addWidget(b_x_left, 1, 0)
+
+        center = _btn("⊙")
+        center.setEnabled(False)
+        center.setToolTip("Current position")
+        xz_grid.addWidget(center, 1, 1)
+
+        b_x_right = _btn("X+ →")
+        b_x_right.clicked.connect(lambda: self._jog("x", 1))
+        xz_grid.addWidget(b_x_right, 1, 2)
+
+        b_z_down = _btn("↓ Z-")
+        b_z_down.clicked.connect(lambda: self._jog("z", -1))
+        xz_grid.addWidget(b_z_down, 2, 1)
+
+        # Separator label
+        sep = QLabel("│")
+        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep.setStyleSheet("QLabel { color: #AAA; font-size: 20pt; }")
+        xz_grid.addWidget(sep, 0, 3, 3, 1)
+
+        # Y column (col 4) — focus up/down
+        y_title = QLabel("Focus (Y)")
+        y_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        y_title.setStyleSheet("QLabel { font-size: 9pt; color: #888; }")
+        xz_grid.addWidget(y_title, 0, 4, alignment=Qt.AlignmentFlag.AlignBottom)
+
+        b_y_up = _btn("↑ Y+\n(into focus)", w=100, h=50)
+        b_y_up.setStyleSheet(
+            "QPushButton { background-color: #E3F2FD; font-size: 9pt; }"
+            "QPushButton:pressed { background-color: #90CAF9; }"
+        )
+        b_y_up.clicked.connect(lambda: self._jog("y", 1))
+        xz_grid.addWidget(b_y_up, 1, 4)
+
+        b_y_down = _btn("↓ Y-\n(out of focus)", w=100, h=50)
+        b_y_down.setStyleSheet(
+            "QPushButton { background-color: #FFF3E0; font-size: 9pt; }"
+            "QPushButton:pressed { background-color: #FFCC80; }"
+        )
+        b_y_down.clicked.connect(lambda: self._jog("y", -1))
+        xz_grid.addWidget(b_y_down, 2, 4)
+
         xz.setLayout(xz_grid)
         arrows_layout.addWidget(xz)
-
-        y_row = QHBoxLayout()
-        b_ym = QPushButton("Y−  (out of focus)")
-        b_ym.clicked.connect(lambda: self._jog("y", -1))
-        b_yp = QPushButton("Y+  (into focus)")
-        b_yp.clicked.connect(lambda: self._jog("y",  1))
-        y_row.addWidget(b_ym)
-        y_row.addWidget(b_yp)
-        arrows_layout.addLayout(y_row)
 
         arrows_group.setLayout(arrows_layout)
         root.addWidget(arrows_group)
@@ -135,8 +181,36 @@ class StageJogWidget(QWidget):
         root.addStretch()
 
     # ------------------------------------------------------------------
-    def _jog(self, axis, sign):
+    def _confirm_large_step(self, step_um: float) -> bool:
+        """
+        Block any step >= LARGE_STEP_THRESHOLD_UM and tell the user to reduce it.
+        Always returns False when the threshold is exceeded — the move never happens.
+        """
+        if abs(step_um) < LARGE_STEP_THRESHOLD_UM:
+            return True
+
+        QMessageBox.information(
+            self,
+            "⚠️  Step Too Large — Move Blocked",
+            f"<b>Step size {abs(step_um):.1f} µm is not allowed.</b><br><br>"
+            f"Moving more than <b>{LARGE_STEP_THRESHOLD_UM:.0f} µm</b> in a single step "
+            f"risks crashing the objective into the sample.<br><br>"
+            f"Please set the step size to <b>{LARGE_STEP_THRESHOLD_UM:.0f} µm or less</b> "
+            f"before moving.",
+        )
+        return False   # always block
+
+    def _jog(self, axis: str, sign: int):
+        """Move stage by one jog step — with large-step safety guard."""
         step = self.state.get_jog_step() * sign
+
+        if not self._confirm_large_step(step):
+            self.signals.status_message.emit(
+                f"⚠️  Move cancelled — reduce step size below "
+                f"{LARGE_STEP_THRESHOLD_UM:.0f} µm first."
+            )
+            return
+
         try:
             self.stage.move_rel(axis, step)
         except Exception as e:
@@ -513,8 +587,7 @@ class StageOnlyWindow(QMainWindow):
         self._pos_status.setStyleSheet("QLabel { font-family: monospace; }")
         self._status_bar.addPermanentWidget(self._pos_status)
 
-        filter_label = "🔬 Filter: --"
-        self._filter_status = QLabel(filter_label)
+        self._filter_status = QLabel("🔬 Filter: --")
         self._status_bar.addPermanentWidget(self._filter_status)
 
         mode_label = QLabel("⚙️  Stage-Only Mode")
@@ -563,7 +636,6 @@ class StageOnlyWindow(QMainWindow):
         z = self.state.stage_position["z"]
         self._pos_status.setText(f"Stage: X={x:.3f}  Y={y:.3f}  Z={z:.3f} µm")
 
-        # Also refresh filter status bar label
         if self.filter_stage:
             try:
                 pos_um = self.filter_stage.get_position() / 1000.0
