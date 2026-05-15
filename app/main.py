@@ -8,7 +8,7 @@ Three operation modes:
   3. Stage Control    – real stages only, no camera, no alignment
 """
 
-import sys
+import sys  
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
